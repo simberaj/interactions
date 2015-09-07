@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<delimitersetup version="1.1.0">
+  <metadata>
+    <code>HAMPL-STD</code>
+    <name>Hampl Standard</name>
+    <author>
+      <name>Jan Šimbera</name>
+      <institution>Charles University in Prague</institution>
+      <contact type="email">simbera.jan@gmail.com</contact>
+    </author>
+    <date year="2015" month="3" day="10" />
+    <description lang="cs-CZ"></description>
+  </metadata>
+  <region type="functional" />
+  <requirement type="interaction" attribute="length" />
+  <elements>
+    <aggregator target="zone" type="flow" id="hinterland">
+      <target-core-only true="1" />
+      <bidirectional-flows true="0" />
+      <try-merge true="0" />
+      <neighbourhood true="0" />
+      <transform type="none" />
+      <secondary-criterion id="verifier" />
+      <indirect-linkage type="gradual" />
+      <external-ordering id="verifier" />
+      <descending-ordering true="1" />
+      <warn-fail true="1" />
+    </aggregator>
+    <aggregator target="zone" type="flow" id="hinterland-noexclave">
+      <target-core-only true="1" />
+      <bidirectional-flows true="0" />
+      <try-merge true="0" />
+      <neighbourhood true="1" />
+      <transform type="none" />
+      <secondary-criterion id="verifier" />
+      <indirect-linkage type="gradual" />
+      <external-ordering id="verifier" />
+      <descending-ordering true="1" />
+      <warn-fail true="1" />
+    </aggregator>
+    <aggregator target="zone" type="neighbourhood" id="hinterland-fallback">
+      <secondary-criterion id="verifier" />
+      <external-ordering id="verifier" />
+      <descending-ordering true="1" />
+      <warn-fail true="1" />
+    </aggregator>
+    <aggregator target="region" type="flow" id="region-main">
+      <neighbourhood true="0" />
+      <target-core-only true="1" />
+      <bidirectional-flows true="0" />
+      <try-change true="0" />
+      <try-merge true="0" />
+      <consider-hinterland-flows true="0" />
+      <reassign-hinterland-separately true="0" />
+      <transform type="none" />
+      <secondary-criterion id="verifier" />
+      <indirect-linkage type="gradual" />
+      <external-ordering id="verifier" />
+      <descending-ordering true="0" />
+      <warn-fail true="1" />
+    </aggregator>
+    <fuzzier type="default" id="exclave-zero" active="1">
+      <exclave-penalization ratio="0" />
+    </fuzzier>
+<!--     <fuzzier type="hampl" id="hampl" active="0" />
+    <fuzzier type="simbera" id="simbera" active="0" />
+ -->    <merger target="core" type="coombes" id="coombes-coop">    
+      <threshold ratio="10" />
+      <to-flow ratio="25" />
+      <counter-flow ratio="10" />
+      <external-ordering id="verifier" />
+    </merger>
+<!--     <merger target="region" type="minimal" id="minimal-overlap-only">
+      <threshold ratio="0" />
+    </merger>
+ -->    <destroyer target="zone" type="membership" id="exclave">
+      <exclave true="1" />
+    </destroyer>
+    <verifier id="main" active="1">
+      <group type="simultaneous">
+        <criterion type="mass" direction="min" parameter="main-mass" />
+        <criterion type="hinterland-mass" direction="min" parameter="hint-mass" />
+      </group>
+    </verifier>
+    <verifier id="secondary" active="0">
+      <criterion type="mass" direction="min" value="1" />
+    </verifier>
+<!--     <coloring id="parametrised">
+      <mixer parameter="mixer-type" />
+    </coloring>
+    <overlap id="basic" />
+ -->  </elements>
+  <algorithm>
+    <global>
+      <verifier id="secondary" />
+    </global>
+<!--     <stage message="merging cooperating cores">
+      <merger id="coombes-coop" />
+    </stage>
+ -->    <stage message="creating hinterlands">
+      <aggregator id="hinterland" />
+    </stage>
+    <stage message="aggregating zones with no flows by neighbourhood">
+      <aggregator id="hinterland-fallback" />
+    </stage>
+    <stage message="aggregating regions">
+      <aggregator id="region-main" />
+      <verifier id="main" />
+    </stage>
+    <stage message="penalizing exclaves">
+      <fuzzier id="exclave-zero" />
+      <destroyer id="exclave" />
+    </stage>
+    <stage message="aggregating regions">
+      <fuzzier id="exclave-zero" />
+      <aggregator id="region-main" />
+      <verifier id="main" />
+    </stage>
+    <stage message="reassigning exclaves">
+      <fuzzier id="exclave-zero" />
+      <aggregator id="hinterland-noexclave" />
+    </stage>
+    <stage message="reassigning exclaves with no corresponding flows by neighbourhood">
+      <fuzzier id="exclave-zero" />
+      <aggregator id="hinterland-fallback" />
+    </stage>
+<!--     <output message="calculating optional outputs">
+      <fuzzier id="simbera" />
+      <merger id="minimal-overlap-only" />
+      <coloring id="parametrised" />
+      <overlap id="basic" />
+    </output>
+ -->  </algorithm>
+  <parameters>
+    <parameter id="main-mass">Minimum Region Mass</parameter>
+    <parameter id="hint-mass">Minimum Region Hinterland Mass</parameter>
+<!--     <parameter id="mixer-type">Color Mixing Method</parameter>
+ -->  </parameters>
+</delimitersetup>
