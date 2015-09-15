@@ -35,7 +35,7 @@ with common.runtool(7) as parameters:
     distLimit = extR + extC
   
   ## COUNTING potentials
-  prog = common.ProgressBar('calculating potentials', rowCount * colCount)
+  prog = common.progressor('calculating potentials', rowCount * colCount)
   values = numpy.zeros((rowCount, colCount), dtype=numpy.float32)
   for i in range(rowCount):
     curX += cellSize

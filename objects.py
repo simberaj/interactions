@@ -1454,12 +1454,12 @@ class FunctionalRegion(Region):
     for ass in self.assignments:
       self._addMass(ass)
 
-  def getBezakSC(self):
-    return self.getIntraflows().sum() / float(self.getMutualFlows())
+  # def getBezakSC(self):
+    # return self.getIntraflows().sum() / float(self.getMutualFlows())
   
-  def getCoombesSC(self):
-    intra = self.getIntraflows().sum()
-    return intra / float(intra + self.getOutflows().sum()) + intra / float(intra + self.getInflows().sum())
+  # def getCoombesSC(self):
+    # intra = self.getIntraflows().sum()
+    # return intra / float(intra + self.getOutflows().sum()) + intra / float(intra + self.getInflows().sum())
       
   def getOutflows(self, core=True, hinter=True):
     '''Returns outflows from given parts of the region out of the region.'''
@@ -1492,13 +1492,13 @@ class FunctionalRegion(Region):
         self._intraflows = self._getIntraflows()
       return self._intraflows
 
-  def getCoreHintFlows(self):
-    '''Returns flows from core to hinterland.'''
-    return self._getIntraflows(fromHinter=False, toCore=False)
+  # def getCoreHintFlows(self):
+    # '''Returns flows from core to hinterland.'''
+    # return self._getIntraflows(fromHinter=False, toCore=False)
   
-  def getHintCoreFlows(self):
-    '''Returns flows from hinterland to core.'''
-    return self._getIntraflows(fromCore=False, toHinter=False)
+  # def getHintCoreFlows(self):
+    # '''Returns flows from hinterland to core.'''
+    # return self._getIntraflows(fromCore=False, toHinter=False)
   
   def getFlowSum(self):
     return sum(zone.getOutflows().sum() for zone in self.getZones())
@@ -2514,7 +2514,7 @@ class RegionMeasurer:
 
   @staticmethod
   def bezakSelfContainment(object):
-    return object.getBezakSC()
+    return object.getIntraflows().sum() / float(object.getMutualFlows().sum())
 
   @staticmethod
   def coombesSelfContainment(object):
@@ -2550,7 +2550,7 @@ class RegionMeasurer:
   
   @staticmethod
   def coreHintMutualFlowSum(object):
-    return (object.getHintCoreFlows().sum() + object.getCoreHintFlows().sum())
+    return (object.getIntraflows(fromHinter=False, toCore=False).sum() + object.getIntraflows(toHinter=False, fromCore=False).sum())
   
   @staticmethod
   def outflowSum(object):

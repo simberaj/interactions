@@ -1159,12 +1159,10 @@ class OutflowSelfContainmentCriterion(VerificationCriterion):
   
   @staticmethod
   def getCriterionValue(object):
-    mass = object.getMass()
-    infl = object.getInflows().sum()
+    intra = object.getIntraflows().sum()
     outfl = object.getOutflows().sum()
-    inside = mass - outfl
     try:
-      return inside / float(mass)
+      return intra / float(intra + outfl)
     except ZeroDivisionError:
       return 0
 
@@ -1175,12 +1173,10 @@ class InflowSelfContainmentCriterion(VerificationCriterion):
   
   @staticmethod
   def getCriterionValue(object):
-    mass = object.getMass()
+    intra = object.getIntraflows().sum()
     infl = object.getInflows().sum()
-    outfl = object.getOutflows().sum()
-    inside = mass - outfl
     try:
-      return inside / float(inside + infl)
+      return intra / float(intra + infl)
     except ZeroDivisionError:
       return 0
   
@@ -1191,13 +1187,11 @@ class AveragedSelfContainmentCriterion(VerificationCriterion):
   
   @staticmethod
   def getCriterionValue(object):
-    mass = object.getMass()
+    intra = object.getIntraflows().sum()
     infl = object.getInflows().sum()
     outfl = object.getOutflows().sum()
-    inside = mass - outfl
-    # common.debug(object, inside, infl, outfl, mass)
     try:
-      return 0.5 * (inside / float(mass) + inside / float(inside + infl))
+      return 0.5 * intra * (1 / float(intra + infl) + 1 / float(intra + outfl))
     except ZeroDivisionError:
       return 0
 
