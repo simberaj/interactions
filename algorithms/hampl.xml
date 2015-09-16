@@ -4,7 +4,7 @@
     <code>HAMPL-STD</code>
     <name>Hampl Standard</name>
     <author>
-      <name>Jan Šimbera</name>
+      <name>Jan Simbera</name>
       <institution>Charles University in Prague</institution>
       <contact type="email">simbera.jan@gmail.com</contact>
     </author>
@@ -61,19 +61,14 @@
     </aggregator>
     <fuzzier type="default" id="exclave-zero" active="1">
       <exclave-penalization ratio="0" />
-    </fuzzier>
-<!--     <fuzzier type="hampl" id="hampl" active="0" />
-    <fuzzier type="simbera" id="simbera" active="0" />
- -->    <merger target="core" type="coombes" id="coombes-coop">    
+    </fuzzier>    
+    <merger target="core" type="coombes" id="coombes-coop">    
       <threshold ratio="10" />
       <to-flow ratio="25" />
       <counter-flow ratio="10" />
       <external-ordering id="verifier" />
     </merger>
-<!--     <merger target="region" type="minimal" id="minimal-overlap-only">
-      <threshold ratio="0" />
-    </merger>
- -->    <destroyer target="zone" type="membership" id="exclave">
+    <destroyer target="zone" type="membership" id="exclave">
       <exclave true="1" />
     </destroyer>
     <verifier id="main" active="1">
@@ -85,11 +80,7 @@
     <verifier id="secondary" active="0">
       <criterion type="mass" direction="min" value="1" />
     </verifier>
-<!--     <coloring id="parametrised">
-      <mixer parameter="mixer-type" />
-    </coloring>
-    <overlap id="basic" />
- -->  </elements>
+  </elements>
   <algorithm>
     <global>
       <verifier id="secondary" />
@@ -124,16 +115,9 @@
       <fuzzier id="exclave-zero" />
       <aggregator id="hinterland-fallback" />
     </stage>
-<!--     <output message="calculating optional outputs">
-      <fuzzier id="simbera" />
-      <merger id="minimal-overlap-only" />
-      <coloring id="parametrised" />
-      <overlap id="basic" />
-    </output>
- -->  </algorithm>
+  </algorithm>
   <parameters>
     <parameter id="main-mass">Minimum Region Mass</parameter>
     <parameter id="hint-mass">Minimum Region Hinterland Mass</parameter>
-<!--     <parameter id="mixer-type">Color Mixing Method</parameter>
- -->  </parameters>
+  </parameters>
 </delimitersetup>
