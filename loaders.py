@@ -322,22 +322,26 @@ class Setter(RowOperator):
     else:
       return cursor.newRow()
   
-  def createFields(self, layer, typePattern, overwrite=True):
+  def createFields(self, layer, typePattern, overwrite=True, append=False):
     # print self.fieldsToSlots, typePattern
     fieldList = common.fieldList(layer)
     for field, caller in self.fieldCallers.iteritems():
-      if field in fieldList:
-        if overwrite:
+      fieldFound = bool(field in fieldList)
+      if fieldFound:
+        if overwrite and not append:
           arcpy.DeleteField_management(layer, field)
-        else:
+        elif not append:
           raise IOError, 'field {} already exists in table {} while overwrite is off'.format(field, layer)
+      elif append:
+        common.warning('field {} does not exist in table {} while append is on, creating')
       if self.fieldSlots[field] in self.types:
         coltype = self.types[self.fieldSlots[field]]
       else:
         coltype = type(caller(typePattern))
         if coltype is type(None):
           raise ValueError, 'could not infer type for {} slot'.format(self.fieldSlots[field])
-      common.addField(layer, field, coltype)
+      if not (append and fieldFound):
+        common.addField(layer, field, coltype)
   
   def getFieldNames(self):
     return self.fieldNames
@@ -465,7 +469,7 @@ class ReadCursor(CursorOperator):
               
   def calibrate(self, row, text=None):
     if text:
-      self.progressor = common.ProgressBar(text, common.count(self.layer))
+      self.progressor = common.progressor(text, common.count(self.layer))
   
   def rows(self, text=None):
     if text:
@@ -486,10 +490,11 @@ class ReadCursor(CursorOperator):
   
     
 class WriteCursor(CursorOperator):
-  def __init__(self, layer, setter, overwrite=True, template=None, shapeType=None, crs=None):
+  def __init__(self, layer, setter, overwrite=True, append=False, template=None, shapeType=None, crs=None):
     CursorOperator.__init__(self, layer)
     self.setter = setter
     self.overwrite = overwrite
+    self.append = append
     self.template = template
     self.crs = crs
     self.shapeType = shapeType
@@ -509,6 +514,7 @@ class WriteCursor(CursorOperator):
           first = False
         self.writeRow(cursor, row)
         self.move()
+      del row
       del cursor
     else:
       common.warning('empty output created: {}'.format(self.layer))
@@ -518,7 +524,7 @@ class WriteCursor(CursorOperator):
     # print 'CALIBRATING'
     # print row
     if text:
-      self.progressor = common.ProgressBar(text, count)
+      self.progressor = common.progressor(text, count)
     self.create(row)
     if self.usesDA:
       return arcpy.da.InsertCursor(self.layer, self.setter.getFieldNames())
@@ -526,13 +532,14 @@ class WriteCursor(CursorOperator):
       return arcpy.InsertCursor(self.layer)
     
   def create(self, row):
-    if self.overwrite:
-      arcpy.env.overwriteOutput = True
-    if self.hasShape:
-      self.layer = common.createFeatureClass(self.layer, self.shapeType, self.template, self.crs)
-    else:
-      self.layer = common.createTable(self.layer)
-    self.setter.createFields(self.layer, row)
+    if not self.append:
+      if self.overwrite:
+        arcpy.env.overwriteOutput = True
+      if self.hasShape:
+        self.layer = common.createFeatureClass(self.layer, self.shapeType, self.template, self.crs)
+      else:
+        self.layer = common.createTable(self.layer)
+    self.setter.createFields(self.layer, row, append=self.append)
   
   def writeRow(self, cursor, values):
     cursor.insertRow(self.setter.set(self.setter.newRow(cursor), values))
@@ -566,7 +573,7 @@ class UpdateCursor(CursorOperator):
     if self.overwrite:
       arcpy.env.overwriteOutput = True
     if text:
-      self.progressor = common.ProgressBar(text, common.count(self.layer))
+      self.progressor = common.progressor(text, common.count(self.layer))
     self.setter.createFields(self.layer, row, overwrite=self.overwrite)
     if self.usesDA:
       return arcpy.da.UpdateCursor(self.layer, self.retriever.getFieldNames() + self.setter.getFieldNames(), self.where)
@@ -674,7 +681,7 @@ class ZoneReader(DatasetReader):
   presetSlots = collections.OrderedDict([('coop', True), ('assign', False)])
   
   def __init__(self, layer, slotDict, targetClass=None, coreQuery=None):
-    common.debug(slotDict)
+    # common.debug(slotDict)
     DatasetReader.__init__(self, layer)
     self.zoneClass = objects.FlowZone if targetClass is None else targetClass
     self.presetsOn = False
@@ -873,7 +880,7 @@ class RelationWriter(DatasetOperator):
   REQUIRED_SLOTS = ('from', 'to')
   DEFAULT_FIELDS = {'from' : 'ID_FROM', 'to' : 'ID_TO'}
 
-  def __init__(self, layer, slotDict, convertToID=False):
+  def __init__(self, layer, slotDict, convertToID=False, append=False):
     self.layer = layer
     self.convertToID = convertToID
     # if convertToID:
@@ -881,7 +888,7 @@ class RelationWriter(DatasetOperator):
     # else:
       # self.fromtoConverter = None
     self.slotDict = self.prepareSlots(slotDict, self.REQUIRED_SLOTS, self.DEFAULT_FIELDS)
-    self.writer = WriteCursor(self.layer, Setter(self.slotDict))
+    self.writer = WriteCursor(self.layer, Setter(self.slotDict), append=append)
   
   def write(self, relations, text=None):
     self.writer.write(self.objectRelationsToRows(relations) if self.convertToID else self.relationsToRows(relations), text=text)
