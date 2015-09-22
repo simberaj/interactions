@@ -72,15 +72,35 @@ class BaseInteractions(defaultdict):
     cp.raw = self.raw
     return cp
   
+  # def restrict(self, restricted):
+    # '''Removes all targets that are not contained in restricted from the interactions.'''
+    # todel = []
+    # for target in self:
+      # if target not in restricted:
+        # todel.append(target) # to prevent RuntimeError from changing dict size during iteration
+        # self._summed = False
+    # for target in todel:
+      # del self[target]
+    # return self
+  
+  # def restrictToRegions(self):
+    # '''Removes all targets that are not regions from the interactions.'''
+    # todel = []
+    # for target in self:
+      # if not isinstance(target, Region):
+        # todel.append(target)
+    # for target in todel:
+      # del self[target]
+    # self._summed = False
+    # return self
+    # {k: d1[k] for k in (d1.viewkeys() & l1)}
+    
   def restrict(self, restricted):
     '''Removes all targets that are not contained in restricted from the interactions.'''
-    todel = []
-    for target in self:
-      if target not in restricted:
-        todel.append(target) # to prevent RuntimeError from changing dict size during iteration
-        self._summed = False
-    for target in todel:
+    # print self, restricted, set(self).difference(restricted)
+    for target in set(self).difference(restricted):
       del self[target]
+    self._summed = False
     return self
   
   def restrictToRegions(self):
@@ -114,8 +134,9 @@ class BaseInteractions(defaultdict):
   def inflowsTo(cls, sources):
     '''Given a list of RegionalUnits, returns a sum of their inflows.'''
     # if len(sources) == 1: return sources[0].getInflows()
-    flows = cls.new()
-    for zone in sources:
+    sources.sort(key=MASS_SORTER)
+    flows = sources[0].getInflows().copy()
+    for zone in sources[1:]:
       flows += zone.getInflows()
     return flows
 
@@ -125,8 +146,13 @@ class BaseInteractions(defaultdict):
     # common.debug(sources)
     # common.debug([(x, x.getOutflows()) for x in sources])
     # if len(sources) == 1: return sources[0].getOutflows()
-    flows = cls.new()
-    for zone in sources:
+    # flows = cls.new()
+    # for zone in sources:
+      # flows += zone.getOutflows()
+    # return flows
+    sources.sort(key=MASS_SORTER)
+    flows = sources[0].getOutflows().copy()
+    for zone in sources[1:]:
       flows += zone.getOutflows()
     return flows
   
@@ -1383,7 +1409,7 @@ class FunctionalRegion(Region):
     if assignment.isCore():
       self._coremass += mass
       self._rawcoremass += assignment.getZone().getMass()
-    self._intraflows = None
+    self._inflows = None
       
   def _subMass(self, assignment):
     '''Updates the mass with the mass of an assignment.'''
@@ -1392,13 +1418,13 @@ class FunctionalRegion(Region):
     if assignment.isCore():
       self._coremass -= mass
       self._rawcoremass -= assignment.getZone().getMass()
-    self._intraflows = None
+    self._inflows = None
   
   def _resetMass(self):
     self._mass = 0
     self._coremass = 0
     self._rawcoremass = 0
-    self._intraflows = None
+    self._inflows = None
     
   def getHinterlandMass(self):
     return (self._mass - self._coremass)
@@ -1461,37 +1487,38 @@ class FunctionalRegion(Region):
     # intra = self.getIntraflows().sum()
     # return intra / float(intra + self.getOutflows().sum()) + intra / float(intra + self.getInflows().sum())
       
-  def getOutflows(self, core=True, hinter=True):
+  def getOutflows(self, core=True, hinter=True, own=False):
     '''Returns outflows from given parts of the region out of the region.'''
     # oscilacni zony se nepocitaji jako region...
     src = (self.getCoreZones() if core else []) + (self.getHinterlandZones() if hinter else [])
     # common.debug(self, core, hinter, src)
     # common.debug(self.interactionClass.outflowsFrom(src))
     # common.debug(self.interactionClass.outflowsFrom(src).exclude(self.getZones()))
-    return self.interactionClass.outflowsFrom(src).exclude(self.getZones())
+    outfl = self.interactionClass.outflowsFrom(src)
+    return outfl if own else outfl.exclude(self.getZones())
 
-  def getInflows(self, core=True, hinter=True):
+  def getInflows(self, **kwargs):
+    if self._inflows is None or kwargs != self._lastInflowKWArgs:
+      self._inflows = self._getInflows(**kwargs)
+      self._lastInflowKWArgs = kwargs
+    return self._inflows
+
+  def _getInflows(self, core=True, hinter=True, own=False):
     zones = (self.getCoreZones() if core else []) + (self.getHinterlandZones() if hinter else [])
-    return self.interactionClass.inflowsTo(zones).exclude(self.getZones())
+    infl = self.interactionClass.inflowsTo(zones)
+    return infl if own else infl.exclude(self.getZones())
   
-  def getMutualFlows(self, core=True, hinter=True):
-    return (self.getInflows(core=core, hinter=hinter) + self.getOutflows(core=core, hinter=hinter)).exclude(self.getZones())
+  def getMutualFlows(self, core=True, hinter=True, own=False):
+    fl = (self.getInflows(core=core, hinter=hinter) + self.getOutflows(core=core, hinter=hinter))
+    return fl if own else fl.exclude(self.getZones())
   
-  def _getIntraflows(self, fromCore=True, fromHinter=True, toCore=True, toHinter=True):
+  def getIntraflows(self, fromCore=True, fromHinter=True, toCore=True, toHinter=True):
     '''Returns outflows from given parts of the region into the region.'''
     # oscilacni zony se nepocitaji jako region...
     fromZones = (self.getCoreZones() if fromCore else []) + (self.getHinterlandZones() if fromHinter else [])
     toZones = (self.getCoreZones() if toCore else []) + (self.getHinterlandZones() if toHinter else [])
     return self.interactionClass.outflowsFrom(fromZones).restrict(toZones)
   
-  def getIntraflows(self, **kwargs):
-    if kwargs:
-      return self._getIntraflows(**kwargs)
-    else:
-      if self._intraflows is None:
-        self._intraflows = self._getIntraflows()
-      return self._intraflows
-
   # def getCoreHintFlows(self):
     # '''Returns flows from core to hinterland.'''
     # return self._getIntraflows(fromHinter=False, toCore=False)

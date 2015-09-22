@@ -254,6 +254,8 @@ class Aggregator(SortingUser):
     return lambda x: x
     
 class FlowAggregator(Aggregator):
+  detailed = False
+  
   def __init__(self, targetCoreOnly, bidirectional, tryChange, tryMerge, useHinterlandFlows, separateHinterland, neighcon, transform, indirectLinkage, **kwargs):
     Aggregator.__init__(self, **kwargs)
     self.targetCoreOnly = targetCoreOnly
@@ -299,9 +301,14 @@ class FlowAggregator(Aggregator):
       return Assignment(zone, target, False)
   
   def aggregateRegion(self, region):
+    # if region.getID() == '508004':
+      # self.detailed = True
     flows = self.indirectLinkage(self, region, self.getFlowsForRegion(region))
     limitTo = (region.getContiguousRegions() if self.finalRound and self.neighcon else None)
-    # common.debug(region, flows)
+    # if region.getID() == '508004':
+      # common.debug(region, flows)
+      # common.debug(region.getMutualFlows(hinter=self.useHinterlandFlows))
+      # self.detailed = False
     target = self.getAggregationTarget(flows, limitTo)
     if self.neighcon and target not in region.getContiguousRegions():
       target = None
@@ -342,29 +349,33 @@ class FlowAggregator(Aggregator):
     flows = self.processFlows(zone.getOutflows(), out=True)
     if self.bidirectional:
       flows += self.processFlows(zone.getInflows(), out=False)
-    return flows
+    return flows.exclude([zone])
   
   def getFlowsForRegion(self, region):
     # common.debug(region.getAssignments())
     # common.debug(region.getOutflows(hinter=self.useHinterlandFlows))
     # common.debug(region, region.getOutflows(hinter=self.useHinterlandFlows))
     # common.debug(region, region.getInflows(hinter=self.useHinterlandFlows))
-    flows = self.processFlows(region.getOutflows(hinter=self.useHinterlandFlows), out=True)
+    flows = self.processFlows(region.getOutflows(hinter=self.useHinterlandFlows, own=True), out=True)
+    # common.debug(self.bidirectional)
     if self.bidirectional:
-      flows += self.processFlows(region.getInflows(hinter=self.useHinterlandFlows), out=False)
-    return flows
+      flows += self.processFlows(region.getInflows(hinter=self.useHinterlandFlows, own=True), out=False)
+    # common.debug(region, flows)
+    return flows.exclude([region])
   
   def processFlows(self, flows, out):
     regional = flows.toCore() if self.targetCoreOnly else flows.toRegional()
     if self.transform:
       flowSum = float(regional.sum())
       for target in regional:
+        if self.detailed:
+          common.debug(target, regional[target], flowSum, self.flowSumFor(target, out), out)
         regional[target] = self.transform(regional[target], flowSum, self.flowSumFor(target, out))
     return regional
   
   def flowSumFor(self, target, out):
     if isinstance(target, Region):
-      return (target.getInflows(hinter=self.useHinterlandFlows) if out else target.getOutflows(hinter=self.useHinterlandFlows)).sum()
+      return (target.getInflows(hinter=self.useHinterlandFlows, own=True) if out else target.getOutflows(hinter=self.useHinterlandFlows, own=True)).sum()
     else:
       return (target.getInflows() if out else target.getOutflows()).sum()
   
@@ -389,7 +400,7 @@ class FlowAggregator(Aggregator):
   @staticmethod
   def curdsTransform(flow, toSum, counterSum):
     try:
-      return flow * (1 / toSum + 1 / counterSum)
+      return flow * (1 / toSum + 1 / float(counterSum))
     except ZeroDivisionError:
       return 0
   
@@ -1482,8 +1493,7 @@ class MultipleSorter(Sorter):
   
   def multiplyFunctionBuilder(self, fxs):
     def multiplyFunction(x):
-      values = (fx(x) for fx in fxs)
-      return reduce(operator.mul, ((1e-4 if val == 0 else val) for val in values))
+      return reduce(operator.mul, ((1e-4 if val == 0 else val) for val in (fx(x) for fx in fxs)))
     return multiplyFunction
   
 class SetupReader(loaders.ConfigReader):
