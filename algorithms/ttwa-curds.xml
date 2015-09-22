@@ -1,38 +1,24 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <delimitersetup version="1.1.0">
   <metadata>
-    <code>HAMPL-STD</code>
-    <name>Hampl Standard</name>
+    <code>TTWA-2001-T-CURDS</code>
+    <name>Coombes TTWA 2001 with CURDS transform</name>
     <author>
       <name>Jan Simbera</name>
       <institution>Charles University in Prague</institution>
-      <contact type="email">simbera.jan@gmail.com</contact>
+      <contact type="email">simberaj@natur.cuni.cz</contact>
     </author>
-    <description lang="cs-CZ">Zakladni algoritmus maximalne se priblizujici k metodice Hamplovy regionalizace (metoda primarniho toku).</description>
+    <description lang="cs-CZ">Zatim neobsahuje linearni tradeoff velikosti a uzavrenosti. CURDS transformace pouziva misto Smartova vzorce pro normalizaci toku rozlozeny vzorec z Coombese (1986), ktery mene zvyhodnuje mensi centra.</description>
   </metadata>
   <region type="functional" />
-  <requirement type="interaction" attribute="length" />
   <elements>
-    <aggregator target="zone" type="flow" id="hinterland">
-      <target-core-only true="1" />
-      <bidirectional-flows true="0" />
-      <try-merge true="0" />
-      <neighbourhood true="0" />
-      <transform type="none" />
-      <secondary-criterion id="verifier" />
-      <indirect-linkage type="gradual" />
-      <external-ordering id="verifier" />
-      <descending-ordering true="1" />
-      <warn-fail true="1" />
-    </aggregator>
     <aggregator target="zone" type="flow" id="hinterland-noexclave">
       <target-core-only true="1" />
       <bidirectional-flows true="0" />
       <try-merge true="0" />
       <neighbourhood true="1" />
-      <transform type="none" />
+      <transform type="curds" />
       <secondary-criterion id="verifier" />
-      <indirect-linkage type="gradual" />
       <external-ordering id="verifier" />
       <descending-ordering true="1" />
       <warn-fail true="1" />
@@ -45,35 +31,28 @@
     </aggregator>
     <aggregator target="region" type="flow" id="region-main">
       <neighbourhood true="0" />
-      <target-core-only true="1" />
-      <bidirectional-flows true="0" />
+      <target-core-only true="0" />
+      <bidirectional-flows true="1" />
       <try-change true="0" />
       <try-merge true="0" />
       <consider-hinterland-flows true="0" />
-      <reassign-hinterland-separately true="0" />
-      <transform type="none" />
+      <reassign-hinterland-separately true="1" />
+      <transform type="curds" />
       <secondary-criterion id="verifier" />
-      <indirect-linkage type="gradual" />
       <external-ordering id="verifier" />
       <descending-ordering true="0" />
       <warn-fail true="1" />
     </aggregator>
     <fuzzier type="default" id="exclave-zero" active="1">
       <exclave-penalization ratio="0" />
-    </fuzzier>    
-    <merger target="core" type="coombes" id="coombes-coop">    
-      <threshold ratio="10" />
-      <to-flow ratio="25" />
-      <counter-flow ratio="10" />
-      <external-ordering id="verifier" />
-    </merger>
+    </fuzzier>
     <destroyer target="zone" type="membership" id="exclave">
       <exclave true="1" />
     </destroyer>
     <verifier id="main" active="1">
       <group type="simultaneous">
-        <criterion type="mass" direction="min" parameter="main-mass" />
-        <criterion type="hinterland-mass" direction="min" parameter="hint-mass" />
+        <criterion type="mass" direction="min" parameter="mass-criterion" />
+        <criterion type="averaged-self-containment" direction="min" parameter="sc-criterion" />
       </group>
     </verifier>
     <verifier id="secondary" active="0">
@@ -84,20 +63,11 @@
     <global>
       <verifier id="secondary" />
     </global>
-<!--     <stage message="merging cooperating cores">
-      <merger id="coombes-coop" />
-    </stage>
- -->    <stage message="creating hinterlands">
-      <aggregator id="hinterland" />
-    </stage>
-    <stage message="aggregating zones with no flows by neighbourhood">
-      <aggregator id="hinterland-fallback" />
-    </stage>
     <stage message="aggregating regions">
       <aggregator id="region-main" />
       <verifier id="main" />
     </stage>
-    <stage message="penalizing exclaves">
+<!--     <stage message="penalizing exclaves">
       <fuzzier id="exclave-zero" />
       <destroyer id="exclave" />
     </stage>
@@ -114,9 +84,9 @@
       <fuzzier id="exclave-zero" />
       <aggregator id="hinterland-fallback" />
     </stage>
-  </algorithm>
+ -->  </algorithm>
   <parameters>
-    <parameter id="main-mass">Minimum Region Mass</parameter>
-    <parameter id="hint-mass">Minimum Region Hinterland Mass</parameter>
+    <parameter id="mass-criterion">Minimum Region Mass</parameter>
+    <parameter id="sc-criterion">Minimum Region Self-Containment (Averaged, %)</parameter>
   </parameters>
 </delimitersetup>
