@@ -5,14 +5,15 @@ INTRAFLOW_MODES = {'NONE' : [], 'ALL' : [(True, True, True, True)], 'CORE-HINTER
 with common.runtool(11) as parameters:
   common.progress('loading settings')
   zoneLayer, zoneIDFld, zoneRegFld, zoneCoreFld, aggregMode, intraflowMode, \
-    interLayer, interFromIDFld, interToIDFld, aggregFlds, outPath = parameters
+    interLayer, interFromIDFld, interToIDFld, aggregFldsStr, outPath = parameters
   # set up data loading
   regload = loaders.RegionalLoader(regionalization.Regionalizer(objects.FunctionalRegion))
   regload.sourceOfZones(zoneLayer, {'id' : zoneIDFld}, targetClass=objects.MonoZone)
   regload.sourceOfPresets({'assign' : zoneRegFld, 'coop' : zoneCoreFld})
   interDict = {'from' : interFromIDFld, 'to' : interToIDFld}
-  interDict.update(collections.OrderedDict([(fld, fld) for fld in common.parseFields(aggregFlds)]))
-  regload.sourceOfMultiInteractions(interLayer, interDict)
+  aggregFlds = common.parseFields(aggregFldsStr)
+  interDict.update({fld : fld for fld in aggregFlds})
+  regload.sourceOfMultiInteractions(interLayer, interDict, ordering=aggregFlds)
   # flow aggregation mode
   regSrc, regTgt = aggregMode.split('-')
   hinterSrc = bool(regSrc != 'CORE')

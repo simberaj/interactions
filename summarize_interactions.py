@@ -2,9 +2,9 @@ import common, objects, loaders, regionalization
 
 OUT_MEASURES = {'TOT_IN_CORE' : 'IN', 'TOT_OUT_CORE' : 'OUT'}
 
-with common.runtool(7) as parameters:
-  zoneLayer, zoneIDFld, zoneTargetQuery, interLayer, interStrengthFlds, \
-    interFromIDFld, interToIDFld = parameters
+with common.runtool(9) as parameters:
+  zoneLayer, zoneQuery, zoneIDFld, interLayer, interQuery, interStrengthFlds, \
+    interFromIDFld, interToIDFld, doCount = parameters
   interFlds = common.parseFields(interStrengthFlds)
   zoneInSlots = {'id' : zoneIDFld}
   objects.MultiInteractions.setDefaultLength(len(interFlds))
@@ -20,19 +20,19 @@ with common.runtool(7) as parameters:
       measuresToSlots[measure].append(slotName)
       outSlots[slotName] = slotName
   regload = loaders.RegionalLoader(regionalization.Regionalizer(objects.FunctionalRegion))
-  regload.sourceOfZones(zoneLayer, zoneInSlots, targetClass=objects.MonoZone, coreQuery=zoneTargetQuery)
-  regload.sourceOfMultiInteractions(interLayer, interSlots)
+  regload.sourceOfZones(zoneLayer, zoneInSlots, targetClass=objects.MonoZone, coreQuery=zoneQuery)
+  regload.sourceOfMultiInteractions(interLayer, interSlots, where=interQuery, ordering=interFlds)
   regload.load()
   common.progress('summarizing')
   measurer = objects.ZoneMeasurer()
   zoneData = {}
+  indexes = range(len(interFlds))
   for zone in regload.getZoneList():
     zoneID = zone.getID()
     zoneData[zoneID] = {}
     for measure in OUT_MEASURES:
       vec = measurer.getMeasure(zone, measure)
-      print zone, measure, vec
-      for i in range(len(interFlds)):
+      for i in indexes:
         zoneData[zoneID][measuresToSlots[measure][i]] = float(vec[i])
   loaders.ObjectMarker(zoneLayer, zoneInSlots, outSlots).mark(zoneData)
 

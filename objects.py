@@ -27,9 +27,9 @@ class BaseInteractions(defaultdict):
     self._summed = False
 
   def __add__(self, plusinter):
-    new = self.copy()
-    new += plusinter
-    return new
+    ret = self.copy()
+    ret += plusinter
+    return ret
   
   def __mul__(self, factor):
     new = self.new()
@@ -96,7 +96,7 @@ class BaseInteractions(defaultdict):
     # {k: d1[k] for k in (d1.viewkeys() & l1)}
     
   def restrict(self, restricted):
-    '''Removes all targets that are not contained in restricted from the interactions.'''
+    '''Removes all targets that are not contained in the provided sequence from the interactions.'''
     # print self, restricted, set(self).difference(restricted)
     for target in set(self).difference(restricted):
       del self[target]
@@ -115,7 +115,7 @@ class BaseInteractions(defaultdict):
     return self
   
   def exclude(self, excluded):
-    '''Removes all targets that are contained in EXCLUDED from the interactions.'''
+    '''Removes all targets that are contained in the provided sequence from the interactions.'''
     for exc in excluded:
       if exc in self:
         del self[exc]
@@ -161,6 +161,9 @@ class BaseInteractions(defaultdict):
     if not self._summed:
       # print self
       # print sum(self.itervalues()), self.default_factory(), self.raw
+      # common.debug(self.values())
+      # common.debug(self.raw)
+      # common.debug(sum(self.itervalues()))
       self._sum = (sum(self.itervalues()) if len(self) > 0 else self.default_factory()) + self.raw
       self._summed = True
       # print self._sum, len(self), sum(self.itervalues()), self.default_factory(), self.raw, self.default_factory() + self.raw
@@ -303,7 +306,7 @@ class Interactions(BaseInteractions):
         resVar += (real[i][1] - expected[i]) ** 2
     # create the significant flows instance
     over = self.new()
-    for item in real[:num]:
+    for item in real[:(num-1)]: # the last one was bad, do not include it
       over[item[0]] = item[1]
     return over
   
@@ -315,7 +318,8 @@ class Interactions(BaseInteractions):
     valords = sorted(self.itervalues(), reverse=True)
     ords = self.new()
     for target, val in self.iteritems():
-      ords[target] = valords.index(val)
+      # average of first and last index of value found
+      ords[target] = (valords.index(val) + len(valords) - valords[::-1].index(val)) / 2.0 + 0.5
     return ords
   
   def relativeStrengths(self):
@@ -339,13 +343,13 @@ class InteractionVector(list):
   Overrides boolean checking - evaluates to True iff any of its items is nonzero.'''
 
   @classmethod
-  def zero(cls, length):
+  def zeros(cls, length):
     return cls([0] * length)
   
   def __add__(self, other):
-    both = self.zero(len(self))
-    both += self
-    both += other
+    both = self.new()
+    for i in range(len(self)):
+      both[i] = self[i] + other[i]
     return both
   
   def __iadd__(self, other):
@@ -375,7 +379,7 @@ class InteractionVector(list):
     return bool(sum(self))
   
   def __repr__(self):
-    return 'InteractionVector' + list.__repr__(self)
+    return 'I' + list.__repr__(self)
    
   @classmethod
   def new(cls):
@@ -393,7 +397,15 @@ class MultiInteractions(BaseInteractions):
       else:
         length = self.defaultLength
     lamb = lambda: numpy.zeros(length)
+    # lamb = lambda: InteractionVector.zeros(length)
     BaseInteractions.__init__(self, lamb, *args, **kwargs)
+
+  def copy(self):
+    cp = self.new()
+    for target in self:
+      cp[target] = numpy.copy(self[target])
+    cp.raw = self.raw
+    return cp
     
   @classmethod
   def setDefaultLength(cls, length):
@@ -1280,7 +1292,6 @@ class Region(RegionalUnit):
     for ass in self.assignments:
       if not ass.isExclave():
         contig.update(ass.getZone().getNeighbours())
-    # arcpy.AddMessage(str(list(contig)))
     contig.difference_update(self.getZones())
     # common.debug([zone.assignments for zone in self.getZones()])
     # common.debug(contig)
@@ -2469,9 +2480,6 @@ class ZoneMeasurer:
 
   @staticmethod
   def sumCoreZoneInflows(object):
-    print object.getInflows()
-    print object.getInflows().toCore()
-    print object.getInflows().toCore().restrictToRegions()
     return object.getInflows().toCore().restrictToRegions().sum()
 
   @staticmethod
@@ -2479,10 +2487,21 @@ class ZoneMeasurer:
     return object.getOutflows().toCore().restrictToRegions().sum()
 
   @staticmethod
+  def countCoreZoneInflows(object):
+    # print object.getInflows()
+    # print object.getInflows().toCore()
+    # print object.getInflows().toCore().restrictToRegions()
+    return len(object.getInflows().toCore().restrictToRegions())
+
+  @staticmethod
+  def countCoreZoneOutflows(object):
+    return len(object.getOutflows().toCore().restrictToRegions())
+
+  @staticmethod
   def exclaveFlag(object):
     return object.getExclaveFlag()
 
-ZoneMeasurer.measureMethods = {'MAX_OUT' : ZoneMeasurer.maxOutflow, 'MAX_D' : ZoneMeasurer.maxTarget, 'CORE_OUT' : ZoneMeasurer.coreOutflow, 'REG_OUT' : ZoneMeasurer.regOutflow, 'NOREG_OUT' : ZoneMeasurer.outOutflow, 'NOREG_OUT_Q' : ZoneMeasurer.outOutflowRatio, 'MAX_MEM' : ZoneMeasurer.maxHamplMembership, 'REG_MEM' : ZoneMeasurer.regHamplMembership, 'MAX_OUT_Q' : ZoneMeasurer.maxOutflowRatio, 'CORE_OUT_Q' : ZoneMeasurer.coreOutflowRatio, 'REG_OUT_Q' : ZoneMeasurer.regOutflowRatio,   'REG_MASS' : ZoneMeasurer.regHamplMembershipMass, 'IS_EXC' : ZoneMeasurer.exclaveFlag, 'TOT_IN' : ZoneMeasurer.sumInflows, 'TOT_OUT' : ZoneMeasurer.sumOutflows, 'TOT_IN_CORE' : ZoneMeasurer.sumCoreZoneInflows, 'TOT_OUT_CORE' : ZoneMeasurer.sumCoreZoneOutflows}
+ZoneMeasurer.measureMethods = {'MAX_OUT' : ZoneMeasurer.maxOutflow, 'MAX_D' : ZoneMeasurer.maxTarget, 'CORE_OUT' : ZoneMeasurer.coreOutflow, 'REG_OUT' : ZoneMeasurer.regOutflow, 'NOREG_OUT' : ZoneMeasurer.outOutflow, 'NOREG_OUT_Q' : ZoneMeasurer.outOutflowRatio, 'MAX_MEM' : ZoneMeasurer.maxHamplMembership, 'REG_MEM' : ZoneMeasurer.regHamplMembership, 'MAX_OUT_Q' : ZoneMeasurer.maxOutflowRatio, 'CORE_OUT_Q' : ZoneMeasurer.coreOutflowRatio, 'REG_OUT_Q' : ZoneMeasurer.regOutflowRatio,   'REG_MASS' : ZoneMeasurer.regHamplMembershipMass, 'IS_EXC' : ZoneMeasurer.exclaveFlag, 'TOT_IN' : ZoneMeasurer.sumInflows, 'TOT_OUT' : ZoneMeasurer.sumOutflows, 'TOT_IN_CORE' : ZoneMeasurer.sumCoreZoneInflows, 'TOT_OUT_CORE' : ZoneMeasurer.sumCoreZoneOutflows, 'COUNT_IN_CORE' : ZoneMeasurer.countCoreZoneInflows, 'COUNT_OUT_CORE' : ZoneMeasurer.countCoreZoneOutflows}
 
       
 class RegionMeasurer:

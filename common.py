@@ -1,6 +1,6 @@
 # COMMON.PY
 # A common module for all scripts in the Interactions toolbox.
-import sys, os, arcpy, operator, traceback, numpy
+import sys, os, arcpy, operator, traceback, numpy, random
 
 
 # constants defining neighbour table field names
@@ -243,6 +243,11 @@ def copy(source, target):
   else:
     arcpy.CopyRows_management(source, target)
   
+def multiplyDistance(dist, mult):
+  distNum, distUnit = dist.split()
+  return str(int(float(distNum) * mult)) + ' ' + distUnit
+  
+  
   
 def getSource(layer):
   desc = arcpy.Describe(layer)
@@ -462,6 +467,63 @@ class MessagingClass:
   def done(self):
     self.messenger.done()
 
+class PathManager:
+  def __init__(self, outPath, delete=True):
+    self.outPath = outPath
+    self.location = os.path.dirname(self.outPath)
+    self.outName = os.path.basename(self.outPath)
+    self.tmpCount = -1
+    self.delete = True
+  
+  def __enter__(self):
+    self.tmpFiles = []
+    self.tmpFields = {}
+    random.seed(self.location)
+    return self
+  
+  def tmpFile(self):
+    tmp = self._tmpPath()
+    self.tmpFiles.append(tmp)
+    return tmp
+  
+  def tmpLayer(self):
+    return self._tmpName()
+  
+  def tmpField(self, layer, fldType):
+    name = self._tmpName().upper()
+    arcpy.AddField_management(layer, name, pyTypeToOut(fldType))
+    if layer not in self.tmpFields: self.tmpFields[layer] = []
+    self.tmpFields[layer].append(name)
+    return name
+    
+  def _tmpName(self):
+    self.tmpCount += 1
+    return 'tmp_{:02d}{:04d}'.format(self.tmpCount, int(1e4 * random.random()))
+  
+  def _tmpPath(self):
+    return featurePath(self.location, self._tmpName())
+  
+  def __exit__(self, *args):
+    if self.delete:
+      progress('deleting temporary files')
+      for file in self.tmpFiles:
+        try:
+          arcpy.Delete_management(file)
+        except:
+          pass
+      progress('deleting temporary fields')
+      for layer in self.tmpFields:
+        try:
+          arcpy.DeleteField_management(layer, self.tmpFields[layer])
+        except:
+          pass
+  
+  def getLocation(self):
+    return self.location
+
+  def getOutputName(self):
+    return self.outName
+
     
 def warning(text):
   '''Displays a warning to the tool user.'''
@@ -482,9 +544,9 @@ def progress(text):
 def done():
   '''Signals ArcPy that the script has successfully terminated. If the script is running in a debug mode, raises an error to bring the tool dialog up again for debugger's convenience; otherwise just displays the message.'''
   if debugMode:
-    raise RuntimeError, 'successfully ended'
-  else:
-    arcpy.SetProgressor('default', 'Done.')
+    arcpy.AddMessage('PROGRESS: Done.')
+  # else:
+  arcpy.SetProgressor('default', 'Done.')
 
 def message(text):
   '''Signals an ordinary message to the user.'''

@@ -20,7 +20,8 @@ MASS_SORTER = operator.methodcaller('getMass')
 SECONDARY_MASS_SORTER = operator.methodcaller('getSecondaryMass')
 GAIN_SORTER = operator.methodcaller('getGain')
 
-DEBUG_FLOW = True
+# DEBUG_FLOW = True
+DEBUG_FLOW = False
 
 class Regionalizer:
   def __init__(self, regionFactory):
@@ -1098,7 +1099,7 @@ class VerificationCriterion(Verifier):
     
   def verify(self, object):
     verif = self.getCriterionValue(object)
-    common.debug('verif: {} -> {} x {}'.format(object, verif, self.value))
+    # common.debug('verif: {} -> {} x {}'.format(object, verif, self.value))
     return (verif >= self.value) if self.min else (verif <= self.value)
   
   def verifyTimes(self, object, times):

@@ -2,9 +2,8 @@ import os, collections, operator, arcpy, objects, common
 from xml.etree import cElementTree as eltree
 
 # TODOS
-# progressors
-# generator functions for cursors
-# sequential setter
+# generator functions for cursors? what for?
+# sequential setter? what for?
 
 SHAPE_FIELD = 'shape'
 
@@ -62,13 +61,13 @@ class RegionalLoader:
     self.interLoader = InteractionReader(layer, self.checkSlots(slots, self.requiredInteractionSlots), where=where)
     self.makeInteractions = True
   
-  def sourceOfMultiInteractions(self, layer, slots, where=None):
+  def sourceOfMultiInteractions(self, layer, slots, where=None, ordering=None):
     objects.MultiInteractions.setDefaultLength(len(slots) - 2)
     if self.zoneClass:
       self.zoneClass.interactionClass = objects.MultiInteractions
     if self.regionalizer:
       self.regionalizer.getRegionFactory().interactionClass = objects.MultiInteractions
-    self.interLoader = MultiInteractionReader(layer, slots, where=where)
+    self.interLoader = MultiInteractionReader(layer, slots, ordering=ordering, where=where)
     self.makeInteractions = True
   
   def possibleNeighbourhood(self, layer, slots={}):
@@ -652,9 +651,9 @@ class BasicReader(DatasetReader):
   requiredInputSlots = []
   targetClass = dict
   
-  def __init__(self, layer, slotDict, targetClass=None, where=None):
+  def __init__(self, layer, slotDict, targetClass=None, where=None, sortSlots=[]):
     DatasetReader.__init__(self, layer, targetClass=targetClass)
-    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where)
+    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where, sortSlots=sortSlots)
 
   def read(self, text=None):
     return list(self.reader.rows(text=text))
@@ -662,9 +661,9 @@ class BasicReader(DatasetReader):
 class DictReader(DatasetReader):
   requiredInputSlots = ['id']
 
-  def __init__(self, layer, slotDict, where=None):
+  def __init__(self, layer, slotDict, where=None, sortSlots=[]):
     DatasetReader.__init__(self, layer)
-    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where)
+    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where, sortSlots=sortSlots)
   
   def read(self, text=None):
     out = {}
@@ -770,12 +769,15 @@ class RelationReader(MatchReader):
     for id in objectDict:
       relTuple = relations[id]
       if self.twosided:
-        if setFrom: getattr(objectDict[id], fromSetterName)(self.remapTargets(objectDict, relTuple[0]))
-        if setTo: getattr(objectDict[id], toSetterName)(self.remapTargets(objectDict, relTuple[1]))
+        if setFrom:
+          outflows = self.remapTargets(objectDict, relTuple[0])
+          getattr(objectDict[id], fromSetterName)(outflows)
+        if setTo:
+          inflows = self.remapTargets(objectDict, relTuple[1])
+          getattr(objectDict[id], toSetterName)(inflows)
       else:
-        getattr(objectDict[id], fromSetterName)(self.remapTargets(objectDict, relTuple))
-    # for object in objects:
-      # print object, object.getOutflows()
+        flows = self.remapTargets(objectDict, relTuple)
+        getattr(objectDict[id], fromSetterName)(flows)
     self.failWarning()
   
 class InteractionReader(RelationReader):
@@ -804,16 +806,18 @@ class MultiInteractionReader(InteractionReader):
   relationClass = objects.MultiInteractions
   requiredInputSlots = RelationReader.requiredInputSlots
   
-  def __init__(self, layer, slotDict={}, **kwargs):
+  def __init__(self, layer, slotDict={}, ordering=None, **kwargs):
     InteractionReader.__init__(self, layer, slotDict, **kwargs)
-    self.valueSlots = slotDict.keys()
-    self.valueSlots.remove('from')
-    self.valueSlots.remove('to')
+    if ordering is None:
+      ordering = slotDict.keys()
+      ordering.remove('from')
+      ordering.remove('to')
+    self.ordering = ordering
     global numpy
     import numpy
   
   def addRelation(self, relations, row):
-    relvec = numpy.array([row[slot] for slot in self.valueSlots])
+    relvec = numpy.array([row[slot] for slot in self.ordering])
     relations[row['from']][0][row['to']] += relvec
     relations[row['to']][1][row['from']] += relvec
   
@@ -1004,7 +1008,7 @@ class InteractionTwosideMarker(RelationMarker):
       for target, value in relation[0].iteritems(): # appears as an outflow
         rowDict[(source, target)]['out'] = value
       for target, value in relation[1].iteritems(): # appears as an inflow
-        rowDict[(source, target)]['in'] = value
+        rowDict[(target, source)]['in'] = value
     return rowDict
   
 class InteractionPresenceMarker(RelationMarker):
@@ -1019,7 +1023,7 @@ class InteractionPresenceMarker(RelationMarker):
       for target, value in relation[0].iteritems(): # appears as an outflow
         rowDict[(source, target)]['out'] = 1
       for target, value in relation[1].iteritems(): # appears as an inflow
-        rowDict[(source, target)]['in'] = 1
+        rowDict[(target, source)]['in'] = 1
     return rowDict
 
     
@@ -1044,7 +1048,7 @@ class SequentialUpdater(DatasetOperator):
     self.updater.update(data, text=text)
     
 class ConfigReader:
-  VERSION = 'unknown'
+  VERSION = None
   FILE_PURPOSE = 'unknown'
   ROOT_TAG_NAME = 'unknown'
 
