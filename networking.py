@@ -41,11 +41,13 @@ class Networker(object):
         
 
 class PlaceLinker(conversion.Converter):
+  MAPPER_CLASS = conversion.ODFieldMapper
+
   def __init__(self, location, places, placesIDField, **kwargs):
     conversion.Converter.__init__(self, location, **kwargs)
     self.places = common.checkFile(places)
     self.placesIDField = placesIDField
-    self.placeMapper = conversion.ODFieldMapper(self.places)
+    self.placeMapper = self.MAPPER_CLASS(self.places)
     self.placeMapper.addIDField(placesIDField)
     
   def addPlaceFields(self, fields):
@@ -121,14 +123,14 @@ class TableInteractionCreator(TableLinker):
     array = arcpy.Array()
     for data in odData:
       array.add(data[common.SHAPE_KEY])
-    return array
+    return {'shape' : array}
 
     
 class TableConnectionCreator(TableLinker, Networker):
   PLACES_LAY = 'tmp_places'
   ROUTE_LAY = 'tmp_routes'
   speedup = False
-  cachedGeometry = []
+  cache = []
 
   def __init__(self, table, odIDFields, places, placeIDField, location, **kwargs):
     TableLinker.__init__(self, table, odIDFields, places, placeIDField, location, **kwargs)
@@ -139,7 +141,6 @@ class TableConnectionCreator(TableLinker, Networker):
       common.progress('creating place selection layer')
       self.places = arcpy.MakeFeatureLayer_management(self.placeFC, self.PLACES_LAY).getOutput(0)
     
-  
   def speedupOn(self, dist):
     self.speedup = True
     self.speedupDistance = dist
@@ -154,6 +155,10 @@ class TableConnectionCreator(TableLinker, Networker):
     common.progress('preparing routing layer')
     self.naLayer = self.makeRouteLayer(network, self.ROUTE_LAY, cost)
     self.routeSublayer = common.sublayer(self.naLayer, 'Routes')
+    # common.debug(common.fieldList(self.routeSublayer))
+    self.cost = cost
+    self.placeMapper.addSilentField(self.cost, float)
+    # self.linkMapper.addMapField('Total_' + cost, cost)
 
   def performSpeedup(self, network, cost):
     common.progress('preparing speedup search')
@@ -163,16 +168,16 @@ class TableConnectionCreator(TableLinker, Networker):
     speeder.loadPlaces()
     speeder.solve()
     common.progress('reading speedup data')
-    self.cachedGeometry = speeder.getGeometryDict()
+    self.cache = speeder.getGeometryDict({cost : 'Total_' + cost})
   
   @staticmethod
   def makeRouteLayer(network, name, cost):
-    return arcpy.MakeRouteLayer_na(network, name, cost, output_path_shape='TRUE_LINES_WITHOUT_MEASURES').getOutput(0)
+    return arcpy.MakeRouteLayer_na(network, name, cost, output_path_shape='TRUE_LINES_WITH_MEASURES', accumulate_attribute_name=[cost]).getOutput(0)
     
   def getGeometry(self, inRow, odData):
     ids = tuple(data[self.placesIDField] for data in odData)
-    if ids in self.cachedGeometry:
-      return self.cachedGeometry[ids]
+    if ids in self.cache:
+      return self.cache[ids]
     else:
       queryParts = []
       for id in ids:
@@ -190,7 +195,7 @@ class TableConnectionCreator(TableLinker, Networker):
       else:
         self.routeCursor = arcpy.SearchCursor(self.routeSublayer)
         route = self.routeCursor.next()
-        return route.shape
+        return {'shape' : route.shape, self.cost : route.getValue('Total_' + self.cost)}
   
   def close(self):
     try:
@@ -226,6 +231,8 @@ class NetworkLinker(PlaceLinker, Networker):
     if not numToFind:
       numToFind = common.count(self.places)
     self.naLayer = self.makeNALayer(common.checkFile(network), self.NA_LAY, cost, cutoff, numToFind)
+    self.cost = cost
+    self.placeMapper.addSilentField(cost, float)
     common.progress('calculating places\' network locations')
     self.calculateLocations(network, self.places, searchDist)
     common.progress('loading places to network')
@@ -251,13 +258,17 @@ class NetworkLinker(PlaceLinker, Networker):
   def solve(self):
     common.progress('solving')
     arcpy.Solve_na(self.naLayer, 'SKIP', 'CONTINUE')
+    # common.debug(common.count(self.routeSublayer))
   
-  def getGeometryDict(self):
+  def getGeometryDict(self, attributes={}):
     prog = common.progressor('caching geometries', common.count(self.routeSublayer))
     geomDict = {}
     inCur = arcpy.SearchCursor(self.routeSublayer)
     for inRow in inCur:
-      geomDict[self.placeMapper.getIDs(inRow)] = inRow.shape
+      ids = self.placeMapper.getIDs(inRow)
+      geomDict[ids] = {'shape' : inRow.shape}
+      for attrTo in attributes:
+        geomDict[ids][attrTo] = inRow.getValue(attributes[attrTo])
       prog.move()
     prog.end()
     del inCur, inRow
@@ -274,8 +285,9 @@ class NetworkLinker(PlaceLinker, Networker):
     ids = []
     for data in odData:
       ids.append(data[self.placesIDField])
+    # common.debug(ids)
     if len(ids) == len(frozenset(ids)):
-      return inRow.shape
+      return {'shape' : inRow.shape, self.cost : inRow.getValue('Total_' + self.cost)}
     else:
       return None
       
@@ -284,12 +296,66 @@ class NetworkLinker(PlaceLinker, Networker):
       self.linkMapper.addMapField(field)    
   
   def close(self):
-    try:
-      self.linkMapper.close()
-    except:
-      pass
-    PlaceLinker.close(self)
+    pass
+    # try:
+      # self.linkMapper.close()
+    # except:
+      # pass
+    # PlaceLinker.close(self)
 
+    
+class NetworkAOICreator(PlaceLinker, Networker):
+  MAPPER_CLASS = conversion.LinkFieldMapper
+  NA_LAY = 'tmp_route'
+  OD_SUBLAYER = 'Facilities'
+  OUTPUT_SUBLAYER = 'Polygons'
+
+  def loadNetwork(self, network, cost=None, searchDist=None, breaks=[1]):
+    common.progress('creating routing layer')
+    # if not numToFind:
+      # numToFind = common.count(self.places)
+    self.naLayer = self.makeNALayer(common.checkFile(network), self.NA_LAY, cost, breaks)
+    common.progress('calculating places\' network locations')
+    self.calculateLocations(network, self.places, searchDist)
+    common.progress('loading places to network')
+    # create mappings
+    toMappingList = common.NET_FIELDS + [(self.NAME_MAP, self.placesIDField, None)]
+    for item in mappings:
+      toMappingList.append(item + [None])
+    # fromMappingList = toMappingList[:]
+    # if cutoffFld:
+      # fromMappingList.append((self.CUTOFF_PREFIX + cost, cutoffFld, None))
+    # if numToFindFld:
+      # fromMappingList.append((self.NUM_TO_FIND_HEADER, numToFindFld, None))
+    # load locations
+    arcpy.AddLocations_na(self.NA_LAY, self.OD_SUBLAYER, self.places, self.networkMappings(toMappingList), '', append='clear')
+    self.outputSublayer = common.sublayer(self.naLayer, self.OUTPUT_SUBLAYER)
+
+  def solve(self):
+    common.progress('solving')
+    arcpy.Solve_na(self.naLayer, 'SKIP', 'CONTINUE')
+
+  def output(self, outName, paramIndex=None):
+    common.progress('creating output file')
+    output = self.createFeatureClass(outName, 'POLYGON', self.placeMapper.getCRS())
+    self.open(output, [self.placeMapper])
+    self.remapData(self.outputSublayer, output, [self.placeMapper])
+    # self.setOutput(output, paramIndex)
+  
+  # def getGeometry(self, inRow, odData):
+    # ids = []
+    # for data in odData:
+      # ids.append(data[self.placesIDField])
+    # if len(ids) == len(frozenset(ids)):
+      # return inRow.shape
+    # else:
+      # return None
+
+  @staticmethod
+  def makeNALayer(network, name=None, cost=None, breaks=None):
+    print network, name, cost, breaks
+    return arcpy.MakeServiceAreaLayer_na(network, name, cost, 'TRAVEL_TO', breaks, 'DETAILED_POLYS', 'NO_OVERLAP', 'RINGS', polygon_trim='NO_TRIM')
+      
     
 class BulkInteractionCreator(NetworkLinker):
   OUTPUT_SUBLAYER = 'Lines'

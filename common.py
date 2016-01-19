@@ -538,8 +538,7 @@ def progress(text):
   '''Signals tool progress by setting the progressor label.'''
   if debugMode:
     arcpy.AddMessage(u'PROGRESS: ' + encodeProgress(text))
-  else:
-    arcpy.SetProgressorLabel(encodeProgress(text))
+  arcpy.SetProgressorLabel(encodeProgress(text))
 
 def done():
   '''Signals ArcPy that the script has successfully terminated. If the script is running in a debug mode, raises an error to bring the tool dialog up again for debugger's convenience; otherwise just displays the message.'''

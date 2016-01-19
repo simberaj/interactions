@@ -23,6 +23,7 @@ class FieldMapper(object):
     self.mappings = []
     self.joinIDFields = []
     self.removeSrcFields = []
+    self.silent = []
     self.data = {}
     self.idFld = None
     self.shape = False
@@ -107,7 +108,7 @@ class FieldMapper(object):
     cursor = arcpy.SearchCursor(self.source)
     names = self.getMappingDict()
     for row in cursor:
-      id = row.getValue(self.idFld)
+      id = unicode(row.getValue(self.idFld))
       self.data[id] = {}
       for name in names:
         val = row.getValue(name)
@@ -116,8 +117,12 @@ class FieldMapper(object):
         self.data[id][common.SHAPE_KEY] = self.parseShape(row.getValue(self.shapeFieldName))
       if progressor is not None: progressor.move()
     del row, cursor
+    # common.debug(self.data)
     if progressor is not None: progressor.end()
-    
+  
+  def addSilentField(self, name, pyType=str):
+    self.silent.append((name, common.pyTypeToOut(pyType)))
+  
   def parseShape(self, geom):
     if self.shapeType == 'POINT':
       return geom.getPart()
@@ -129,6 +134,8 @@ class FieldMapper(object):
     for name, aliases, outType in self.mappings:
       for alias in aliases:
         arcpy.AddField_management(output, alias, outType)
+    for name, outType in self.silent:
+      arcpy.AddField_management(output, name, outType)
     outDesc = arcpy.Describe(output)
     if hasattr(outDesc, 'ShapeFieldName'):
       self.outputShapeFieldName = outDesc.ShapeFieldName
@@ -176,7 +183,7 @@ class ODFieldMapper(FieldMapper):
 
   def getIDs(self, inRow):
     if self.joinIDFields:
-      return tuple(inRow.getValue(idFld) for idFld in self.joinIDFields)
+      return tuple(unicode(inRow.getValue(idFld)) for idFld in self.joinIDFields)
     elif self.joinIDSourceField:
       return self.joinIDGetter(inRow.getValue(self.joinIDSourceField))
     else:
@@ -196,11 +203,15 @@ class ODFieldMapper(FieldMapper):
         outRow.setValue(self.mapDict[name][i], data[name])
       odData.append(data)
     if processor and odData:
-      shape = processor(inRow, odData)
-      if shape is None:
+      attrs = processor(inRow, odData)
+      if attrs is None:
         self.errors += 1
       else:
-        outRow.setValue(self.outputShapeFieldName, shape)
+        if 'shape' in attrs:
+          attrs[self.outputShapeFieldName] = attrs['shape']
+          del attrs['shape']
+        for key, value in attrs.iteritems():
+          outRow.setValue(key, value)
     return outRow
 
 
@@ -232,14 +243,20 @@ class Converter:
     for mapper in mappers:
       mapper.open(output)
       
-  def remapData(self, source, output, mappers=[], shapeProcessor=None):
-    prog = common.progressor('remapping records', common.count(source))
+  def remapData(self, source, output, mappers=[], processor=None):
+    count = common.count(source)
+    if count == 0:
+      common.warning('remapping source is empty, empty output generated')
+      return
+    prog = common.progressor('remapping records', count)
     inCur = arcpy.SearchCursor(source)
     outCur = arcpy.InsertCursor(output)
+    # common.debug('remapping')
     for inRow in inCur:
       outRow = outCur.newRow()
       for mapper in mappers:
-        outRow = mapper.remap(inRow, outRow, shapeProcessor)
+        outRow = mapper.remap(inRow, outRow, processor)
+        # common.debug(mapper, outRow)
         if outRow is None:
           break
       if outRow is not None:

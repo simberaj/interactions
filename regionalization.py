@@ -255,20 +255,21 @@ class Aggregator(SortingUser):
     return lambda x: x
     
 class FlowAggregator(Aggregator):
-  detailed = False
-  
-  def __init__(self, targetCoreOnly, bidirectional, tryChange, tryMerge, useHinterlandFlows, separateHinterland, neighcon, transform, indirectLinkage, **kwargs):
+  def __init__(self, targetCoreOnly, bidirectional, useHinterlandFlows, separateHinterland, neighcon, **kwargs):
     Aggregator.__init__(self, **kwargs)
     self.targetCoreOnly = targetCoreOnly
     self.bidirectional = bidirectional
-    self.tryChange = tryChange
-    self.tryMerge = tryMerge
     self.useHinterlandFlows = useHinterlandFlows
     self.separateHinterland = separateHinterland
     self.neighcon = neighcon
-    self.transform = transform
-    self.indirectLinkage = indirectLinkage
 
+  def aggregateItem(self, item):
+    if self.targetsRegions():
+      for assignment in self.aggregateRegion(item):
+        yield assignment
+    else:
+      yield self.aggregateZone(item)
+  
   def doTryChange(self):
     return self.tryChange
   
@@ -278,13 +279,6 @@ class FlowAggregator(Aggregator):
   def hasNeighbourhoodCondition(self):
     return self.neighcon
     
-  def aggregateItem(self, item):
-    if self.targetsRegions():
-      for assignment in self.aggregateRegion(item):
-        yield assignment
-    else:
-      yield self.aggregateZone(item)
-  
   def aggregateZone(self, zone):
     flows = self.indirectLinkage(self, zone, self.getFlowsForZone(zone))
     # print flows
@@ -316,18 +310,12 @@ class FlowAggregator(Aggregator):
     if DEBUG_FLOW: common.debug('{region}: {target}'.format(**locals()))
     return self.assignmentsForRegion(region, target)
   
-  def assignmentsForRegion(self, region, target):
-    if target is None:
-      yield None
-    else:
-      zones = region.getCoreZones() if self.separateHinterland else region.getZones()
-      for zone in zones:
-        yield Assignment(zone, target, False)
-      region.erase()
-      if self.separateHinterland:
-        for zone in region.getHinterlandZones():
-          yield self.aggregateZone(zone)
-      
+  def indirectLinkage(self, self2, object, flows):
+    return self.toRegions(object, flows)
+  
+  def toRegions(self, object, flows):
+    return flows.restrictToRegions()
+  
   def getAggregationTarget(self, flows, limitTo=None):
     if flows:
       # if limited to a set, remove all others
@@ -346,6 +334,29 @@ class FlowAggregator(Aggregator):
     else:
       return None # linking exhausted or simply no flows
   
+  def assignmentsForRegion(self, region, target):
+    if target is None:
+      yield None
+    else:
+      zones = region.getCoreZones() if self.separateHinterland else region.getZones()
+      for zone in zones:
+        yield Assignment(zone, target, False)
+      region.erase()
+      if self.separateHinterland:
+        for zone in region.getHinterlandZones():
+          yield self.aggregateZone(zone)
+      
+    
+class ExhaustiveFlowAggregator(FlowAggregator):
+  # detailed = False
+  
+  def __init__(self, tryChange, tryMerge, transform, indirectLinkage, **kwargs):
+    FlowAggregator.__init__(self, **kwargs)
+    self.tryChange = tryChange
+    self.tryMerge = tryMerge
+    self.transform = transform
+    self.indirectLinkage = indirectLinkage
+
   def getFlowsForZone(self, zone):
     flows = self.processFlows(zone.getOutflows(), out=True)
     if self.bidirectional:
@@ -369,8 +380,8 @@ class FlowAggregator(Aggregator):
     if self.transform:
       flowSum = float(regional.sum())
       for target in regional:
-        if self.detailed:
-          common.debug(target, regional[target], flowSum, self.flowSumFor(target, out), out)
+        # if self.detailed:
+          # common.debug(target, regional[target], flowSum, self.flowSumFor(target, out), out)
         regional[target] = self.transform(regional[target], flowSum, self.flowSumFor(target, out))
     return regional
   
@@ -404,38 +415,7 @@ class FlowAggregator(Aggregator):
       return flow * (1 / toSum + 1 / float(counterSum))
     except ZeroDivisionError:
       return 0
-  
-  # @staticmethod
-  # def absoluteTransform(newFlows, mainFlows, out=False, coef=1):
-    # mainFlowSum = float(mainFlows.sum())
-    # for target in mainFlows:
-      # newFlows[target] += coef * mainFlows[target]
-    # return newFlows
-
-  # @staticmethod
-  # def intramaxTransform(newFlows, mainFlows, out=False, coef=1):
-    # mainFlowSum = float(mainFlows.sum())
-    # for target in mainFlows:
-      # newFlows[target] += coef * mainFlows[target] / (mainFlowSum + float(target.sumFlows(out)))
-    # return newFlows
-
-  # @staticmethod
-  # def smartTransform(newFlows, mainFlows, out=False, coef=1):
-    # mainFlowSum = float(mainFlows.sum())
-    # for target in mainFlows:
-      # newFlows[target] += coef * mainFlows[target] ** 2 / (mainFlowSum + float(target.sumFlows(out)))
-    # return newFlows
-
-  # @staticmethod
-  # def curdsTransform(newFlows, mainFlows, out=False, coef=1):
-    # ratioFactor = 1 / float(mainFlows.sum())
-    # for target in mainFlows:
-      # newFlows[target] += coef * mainFlows[target] * (ratioFactor + 1 / float(target.sumFlows(out)))
-    # return newFlows
-  
-  def toRegions(self, object, flows):
-    return flows.restrictToRegions()
-  
+    
   def gradeDown(self, object, flows):
     if flows:
       # common.debug(object)
@@ -460,22 +440,38 @@ class FlowAggregator(Aggregator):
   def markovChain(self, object, flows):
     return flows # TODO
 
-class RingAggregator(Aggregator):
-  def __init__(self, threshold, **kwargs):
-    Aggregator.__init__(self, **kwargs)
+    
+class RingAggregator(FlowAggregator):
+  def __init__(self, threshold, tryMerge, **kwargs):
+    kwargs['warnFail'] = False
+    FlowAggregator.__init__(self, **kwargs)
+    self.tryMerge = tryMerge # TODO
     self.threshold = threshold
 
-  def aggregateItem(self, item):
-    if not item.isAssigned():
-      flows = item.getOutflows()
-      if flows and flows.max() / flows.sum() >= self.threshold:
-        reg = common.maxKey(flows).getCore()
-        if reg is not None:
-          if DEBUG_FLOW: common.debug('Zone {item} in ring: {reg}'.format(**locals()))
-          yield Assignment(item, reg, False)
+  def getFlowsForZone(self, zone):
+    flows = zone.getOutflows()
+    if self.bidirectional:
+      flows += zone.getInflows()
+    return self.thresholdFlows(flows).exclude([zone])
   
+  def getFlowsForRegion(self, region):
+    flows = region.getOutflows(hinter=self.useHinterlandFlows, own=True)
+    if self.bidirectional:
+      flows += region.getInflows(hinter=self.useHinterlandFlows, own=True)
+    return self.thresholdFlows(flows).exclude([region])
+  
+  def thresholdFlows(self, flows):
+    regional = flows.toCore() if self.targetCoreOnly else flows.toRegional()
+    flowSum = regional.sum()
+    if flowSum:
+      normalized = regional / flowSum
+      return normalized.allOver(self.threshold)
+    else:
+      return regional
+        
   def getFailReason(self):
     return 'no flows over {threshold} % found'.format(threshold=self.threshold)
+ 
  
 class NeighbourhoodAggregator(Aggregator):
   def aggregateItem(self, item):
@@ -1007,24 +1003,15 @@ class CoombesMerger(Merger):
 class Destroyer(RegionalizationElement): # OK, multiready
   targetsUnassigned = lambda self: False
 
-  def __init__(self, target, threshold, exclave):
+  def __init__(self, target):
     self.isRegional = target
-    self.threshold = threshold
-    self.exclave = exclave
   
   def targetsRegions(self):
     return self.isRegional
   
-  def targetsExclaves(self):
-    return self.exclave
-  
   def run(self, targets):
-    # print self.threshold, self.exclave
     for target in targets:
-      # if target.isExclave():
-        # print target, self.getCriterionValue(target), target.isExclave()
-      if ((self.threshold and self.getCriterionValue(target) <= self.threshold) or
-        (self.exclave and target.isExclave())):
+      if self.destroy(target):
         if DEBUG_FLOW: common.debug('Destroying %s' % target)
         if self.isRegional:
           target.erase()
@@ -1032,9 +1019,37 @@ class Destroyer(RegionalizationElement): # OK, multiready
           target.deassign()
     
 class MembershipDestroyer(Destroyer):
+  def __init__(self, target, threshold, exclave):
+    Destroyer.__init__(self, target)
+    self.threshold = threshold
+    self.exclave = exclave
+
+  def destroy(self, target):
+    # if target.isExclave():
+      # print target, self.getCriterionValue(target), target.isExclave()
+    return ((self.exclave and target.isExclave()) and (self.threshold and self.getCriterionValue(target) <= self.threshold))
+
+  def targetsExclaves(self):
+    return self.exclave
+    
   @staticmethod
   def getCriterionValue(target):
     return sum(ass.getDegree() for ass in target.getAssignments())
+
+    
+class VerificationDestroyer(Destroyer):
+  def __init__(self, criterionRef, **kwargs):
+    Destroyer.__init__(self, **kwargs)
+    self.criterionRef = criterionRef
+
+  def join(self, stage):
+    self.criterion = self.initElement(stage, self.criterionRef)
+    
+  def destroy(self, target):
+    return not self.criterion.verify(target)
+  
+  def targetsExclaves(self):
+    return False
 
     
 class Verifier(RegionalizationElement):
@@ -1313,6 +1328,7 @@ class BaseStage:
     for elName in self.ELEMENT_TYPES:
       item = getattr(self, elName)
       if hasattr(item, 'join'):
+        # common.message(item)
         item.join(self) # init sorters
     self._doVerify = self.verifier and self.verifier.isActive()
 
@@ -1582,12 +1598,12 @@ class DRSetupReader(SetupReader):
     'inflow-self-containment' : InflowSelfContainmentCriterion, 
     'averaged-self-containment' : AveragedSelfContainmentCriterion}
   AGGREGATION_TRANSFORMS = {'none' : None,
-    'intramax' : FlowAggregator.intramaxTransform,
-    'smart' : FlowAggregator.smartTransform,
-    'curds' : FlowAggregator.curdsTransform}
-  AGGREGATION_SUBBINDS = {'none' : FlowAggregator.toRegions,
-    'gradual' : FlowAggregator.gradeDown,
-    'markov' : FlowAggregator.markovChain}
+    'intramax' : ExhaustiveFlowAggregator.intramaxTransform,
+    'smart' : ExhaustiveFlowAggregator.smartTransform,
+    'curds' : ExhaustiveFlowAggregator.curdsTransform}
+  AGGREGATION_SUBBINDS = {'none' : ExhaustiveFlowAggregator.toRegions,
+    'gradual' : ExhaustiveFlowAggregator.gradeDown,
+    'markov' : ExhaustiveFlowAggregator.markovChain}
   OBJECT_TARGETS = {'zone' : False, 'region' : True}
   PART_TARGETS = {'core' : False, 'region' : True}
   THRESHOLD_DIRECTIONS = {'min' : True, 'max' : False}
@@ -1597,13 +1613,13 @@ class DRSetupReader(SetupReader):
 
   def __init__(self, parameters=tuple()):
     SetupReader.__init__(self, parameters)
-    self.AGGREGATOR_FACTORIES = {'flow' : self.parseFlowAggregator, 'neighbourhood' : self.parseNeighbourhoodAggregator, 'ring' : self.parseRingAggregator}
+    self.AGGREGATOR_FACTORIES = {'flow' : self.parseExhaustiveFlowAggregator, 'neighbourhood' : self.parseNeighbourhoodAggregator, 'ring' : self.parseRingAggregator}
     self.CHANGER_FACTORIES = {'relative' : self.parseRelativeChanger}
     self.FUZZIER_FACTORIES = {'basic' : self.parseBasicFuzzier, 'default' : self.parseBasicFuzzier, 'hampl' : self.parseHamplFuzzier, 'simbera' : self.parseSimberaFuzzier}
     self.DEFAULT_FUZZIER_FACTORY = self.parseBasicFuzzier
     self.HALTER_FACTORIES = {'count' : self.parseCountHalter}
     self.MERGER_FACTORIES = {'hampl' : self.parseHamplMerger, 'coombes' : self.parseCoombesMerger, 'watts' : self.parseWattsMerger, 'minimal' : self.parseMinimalMerger}
-    self.DESTROYER_FACTORIES = {'membership' : self.parseMembershipDestroyer}
+    self.DESTROYER_FACTORIES = {'membership' : self.parseMembershipDestroyer, 'external' : self.parseVerificationDestroyer}
     self.GROUP_FACTORIES = {'simultaneous' : self.parseSimultaneousGroup, 'alternative' : self.parseAlternativeGroup, 'linear-tradeoff' : self.parseLinearTradeoff}
     self.ELEMENT_PARSERS = {'aggregator' : self.parseAggregator, 'changer' : self.parseChanger, 'merger' : self.parseMerger, 'verifier' : self.parseVerifier, 'destroyer' : self.parseDestroyer, 'fuzzier' : self.parseFuzzier, 'halter' : self.parseHalter, 'coloring' : self.parseColoring, 'overlap' : self.parseRegionOverlapping}
     self.no = 1 # stage index
@@ -1670,14 +1686,17 @@ class DRSetupReader(SetupReader):
   
   def parseRingAggregator(self, node, **kwargs):
     return RingAggregator(
-      targetCoreOnly=self.boolGet(node.find('target-core-only'), default=False),
-      bidirectional=self.boolGet(node.find('bidirectional-flows'), default=True),
+      targetCoreOnly=self.boolGet(node.find('target-core-only'), default=True),
+      bidirectional=self.boolGet(node.find('bidirectional-flows'), default=False),
       tryMerge=self.boolGet(node.find('try-merge'), default=False),
+      useHinterlandFlows=self.boolGet(node.find('consider-hinterland-flows'), default=False),
+      separateHinterland=self.boolGet(node.find('reassign-hinterland-separately'), default=True),
       neighcon=self.boolGet(node.find('neighbourhood'), default=False),
+      secondaryRef=self.strGet(node.find('secondary-criterion'), default=None), 
       threshold=self.ratioGet(node.find('threshold')), **kwargs)
   
-  def parseFlowAggregator(self, node, **kwargs):
-    return FlowAggregator(
+  def parseExhaustiveFlowAggregator(self, node, **kwargs):
+    return ExhaustiveFlowAggregator(
       targetCoreOnly=self.boolGet(node.find('target-core-only'), default=False),
       bidirectional=self.boolGet(node.find('bidirectional-flows'), default=True),
       tryChange=self.boolGet(node.find('try-change'), default=False),
@@ -1768,6 +1787,10 @@ class DRSetupReader(SetupReader):
     return MembershipDestroyer(target=self.typeGet(node, self.OBJECT_TARGETS, 'target'),
       threshold=self.valueGet(node.find('threshold'), default=None),
       exclave=self.boolGet(node.find('exclave'), default=False))
+      
+  def parseVerificationDestroyer(self, node):
+    return VerificationDestroyer(target=self.typeGet(node, self.OBJECT_TARGETS, 'target'),
+      criterionRef=self.strGet(node.find('external-criterion')))
       
   
   def parseVerifier(self, node):
