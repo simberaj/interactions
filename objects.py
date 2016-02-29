@@ -1575,14 +1575,14 @@ class FunctionalRegion(Region):
     # all other zones' affiliations to the region (membership is zero if the core outflow is zero)
     inflows = self.interactionClass.inflowsTo(cores).exclude(cores)
     for source in inflows:
-      w += source.hamplMembership(self, inflows[source], zone.getPenalizationDiff(self)) * source.getMass()
+      w += source.hamplMembership(self, zone.getPenalizationDiff(self)) * source.getMass()
     return w
 
     
 # a unit that contains zones and limits region growth
 class AdministrativeUnit(RegionalUnit):
   def __repr__(self):
-    return '<AdministrativeUnit {}>'.format(self.id)
+    return '<Unit {}>'.format(self.id)
  
  
 class Loader(object):
@@ -2562,9 +2562,9 @@ class RegionMeasurer:
   def bezakSelfContainment(object):
     return object.getIntraflows().sum() / float(object.getMutualFlows().sum())
 
-  @staticmethod
+  @classmethod
   def coombesSelfContainment(object):
-    return (self.residenceSelfContainment(object) + self.workplaceSelfContainment(object)) / 2.0
+    return (cls.residenceSelfContainment(object) + cls.workplaceSelfContainment(object)) / 2.0
 
   # def bezakCrit(object):
     # return min(object.objectContainment(), 1) * min(1.0526 * object.getMass() / object.minMass, 1)
