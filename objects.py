@@ -2563,7 +2563,7 @@ class RegionMeasurer:
     return object.getIntraflows().sum() / float(object.getMutualFlows().sum())
 
   @classmethod
-  def coombesSelfContainment(object):
+  def coombesSelfContainment(cls, object):
     return (cls.residenceSelfContainment(object) + cls.workplaceSelfContainment(object)) / 2.0
 
   # def bezakCrit(object):
