@@ -1,21 +1,115 @@
-import os, collections, operator, arcpy, objects, common
+from __future__ import absolute_import
+
+import os, collections, operator, arcpy, objects, common, math# , geojson
+import regional
 from xml.etree import cElementTree as eltree
 
 # TODOS
-# generator functions for cursors? what for?
+# generator functions for cursors
 # sequential setter? what for?
 
+SHAPE_SLOT = 'shape'
 SHAPE_FIELD = 'shape'
+SHAPE_FIELD_DA = 'SHAPE@'
+SHAPE_FIELDS = (SHAPE_FIELD, SHAPE_FIELD_DA)
 
-def parsePoint(shape):
+WGS_84_PRJ = os.path.join(os.path.dirname(__file__), 'wgs84.prj')
+
+
+def arcpyToPoint(shape): # returns multid array as in geojson point
   if shape is None:
     return None
   else:
     part = shape.getPart()
-    return numpy.array([part.X, part.Y])
+    return [part.X, part.Y]
 
-SHAPE_CONVERTORS = {'point' : parsePoint}
+def arcpyToMultiPoint(shape): # returns multid array as in geojson multipoint
+  if shape is None:
+    return None
+  else:
+    return [[point.X, point.Y] for point in shape]
 
+def arcpyToLine(polyline): # returns multid array as in geojson multilinestring
+  return [[[point.X, point.Y] for point in part] for part in polyline]
+
+def arcpyToPolygon(polygon): # returns multid array as in geojson multipolygon
+  geom = []
+  partI = 0
+  partN = polygon.partCount
+  while partI < partN:
+    partGeom = [[]]
+    part = polygon.getPart(partI)
+    point = part.next()
+    while point:
+      # common.message(point)
+      partGeom[-1].append([point.X, point.Y])
+      point = part.next()
+      if not point: # interior ring (hole)
+        partGeom.append([])
+        point = part.next()
+    if partGeom[-1] == []:
+      partGeom = partGeom[:-1]
+    geom.append(partGeom)
+    partI += 1
+  return geom
+
+def pointToArcPy(shape, spr=None):
+  return arcpy.PointGeometry(arcpy.Point(*shape), spr)
+  
+def multiPointToArcPy(multipoint, spr=None):
+  arr = arcpy.Array()
+  for pt in multipoint:
+    arr.add(arcpy.Point(*pt))
+  return arcpy.MultiPoint(arr, spr)
+
+def lineToArcPy(polyline, spr=None):
+  partsOut = arcpy.Array()
+  for part in polyline:
+    partOut = arcpy.Array()
+    for pt in part:
+      partOut.add(arcpy.Point(*pt))
+    partsOut.add(partOut)
+  # pl = arcpy.Polyline(partsOut, spr)
+  # if pl.pointCount != len(polyline[0]):
+    # print(polyline)
+    # print(spr.name)
+    # raise ValueError, str((pl.pointCount, len(polyline[0])))
+  return arcpy.Polyline(partsOut, spr)
+
+def polygonToArcPy(polygon, spr=None):
+  partsOut = arcpy.Array()
+  for part in polygon:
+    partOut = arcpy.Array()
+    for ring in part:
+      ringOut = arcpy.Array()
+      for pt in ring:
+        ringOut.add(arcpy.Point(*pt))
+      partOut.add(ringOut)
+    if len(partOut) == 1:
+      partOut = partOut.getObject(0)
+    partsOut.add(partOut)
+  if len(partsOut) == 1:
+    partsOut = partsOut.getObject(0)
+  return arcpy.Polygon(partsOut, spr)
+    
+def geojsonToArcPyList(geom):
+  geomType = geom['type']
+  coors = geom['coordinates']
+  # if geomType in ('LineString', 'Polygon'):
+  if geomType in ('LineString', 'Polygon'):
+    # print(coors)
+    return [coors] # arcpy only knows multipart line/polygon types
+  else:
+    return coors
+
+  # return GEOJSON_TO_ARCPY_SHAPE_CONV[geometry['type']](geometry['coordinates'])
+    
+ARCPY_TO_LIST_SHAPE_CONV = {'point' : arcpyToPoint, 'multipoint' : arcpyToMultiPoint, 'polyline' : arcpyToLine, 'polygon' : arcpyToPolygon}
+
+LIST_TO_ARCPY_SHAPE_CONV = {'point' : pointToArcPy, 'multipoint' : multiPointToArcPy, 'polyline' : lineToArcPy, 'polygon' : polygonToArcPy}
+
+GEOJSON_TO_ARCPY_SHAPE_CONV = {'Point' : pointToArcPy, 'MultiPoint' : multiPointToArcPy, 'LineString' : (lambda x: lineToArcPy([x])), 'MultiLineString' : lineToArcPy, 'Polygon' : (lambda x: polygonToArcPy([x])), 'MultiPolygon' : polygonToArcPy}
+  
 class ConfigError(Exception):
   pass
 
@@ -70,17 +164,18 @@ class RegionalLoader:
     self.interLoader = MultiInteractionReader(layer, slots, ordering=ordering, where=where)
     self.makeInteractions = True
   
-  def possibleNeighbourhood(self, layer, slots={}):
+  def possibleNeighbourhood(self, layer, slots={}, exterior=False):
     if not self.regionalizer or self.regionalizer.neighbourhoodNeeded():
+      # common.debug(repr(layer))
       if not layer:
-        layer = self.createNeighbourTable()
+        layer = self.createNeighbourTable(exterior=exterior)
       self.makeNeighbourhood = True
-      self.neighbourLoader = NeighbourTableReader(layer, slots)
+      self.neighbourLoader = NeighbourTableReader(layer, slots, exterior)
     
-  def createNeighbourTable(self):
-    global conversion
-    import conversion
-    return conversion.generateNeighbourTableFor(self.zoneLayer, self.zoneSlots['id'])
+  def createNeighbourTable(self, exterior=False):
+    tblPath = common.tablePath(common.location(self.zoneLayer), common.fcName(self.zoneLayer) + '_neigh')
+    import neighbour_table
+    return neighbour_table.table(self.zoneLayer, self.zoneSlots['id'], tblPath, exterior=exterior, selfrel=False)
     
   def load(self):
     self.zoneLoader = ZoneReader(self.zoneLayer, self.zoneSlots, targetClass=self.zoneClass)
@@ -152,14 +247,15 @@ class RegionalLoader:
     common.progress('computing outputs')
     regionalizer.postRun()
     common.progress('writing zone output')
-    self.inferZoneTypes()
-    ObjectMarker(self.zoneLayer, self.zoneIDSlot, self.zoneOutputSlots, self.zoneOutputCallers, self.zoneOutputTypes).mark(regionalizer.getOutputZones())
-    # print
-    # print regionalizer.getRegionOverlaps()
-    # print
+    self.outputZones(regionalizer.getOutputZones())
     common.progress('writing optional outputs')
     for i in range(len(self.outputs)):
       self.outputs[i].write(self.outputTransforms[i](regionalizer))
+  
+  def outputZones(self, zoneDict):
+    self.inferZoneTypes()
+    ObjectMarker(self.zoneLayer, self.zoneIDSlot, self.zoneOutputSlots, self.zoneOutputCallers, self.zoneOutputTypes).mark(zoneDict)
+
   
   
 class RowOperator:
@@ -179,6 +275,8 @@ class RowOperator:
     self.initSlots()
   
   def initSlots(self):
+    if SHAPE_SLOT in self.slots:
+      self.slots[SHAPE_SLOT] = (SHAPE_FIELD_DA if self.indexAccess else SHAPE_FIELD)
     fieldSet = set()
     for mapping in self.slots.values():
       fieldSet.update(self.getKeys(mapping))
@@ -191,6 +289,12 @@ class RowOperator:
 
   def getFieldCount(self):
     return len(self.fieldNames)
+  
+  def hasSlot(self, slot):
+    return bool(slot in self.slots)
+  
+  def getSlots(self):
+    return self.slots
     
   @staticmethod
   def getKeys(mapping):
@@ -204,18 +308,21 @@ class RowOperator:
   def addConversion(self, slot, converter):
     self.conversions.append((slot, converter))
 
-class OneFieldGetter(RowOperator):
+  def newRow(self, cursor):
+    if self.indexAccess:
+      return [None] * self.getFieldCount()
+    else:
+      return cursor.newRow()
+    
+class OneFieldRowOperator(RowOperator):
   def __init__(self, field):
     self.field = field
+    self.slot = field
+    self.converter = None
 
   def initSlots(self):
-    self.get = self.getByIndex if self.indexAccess else self.getByKey
-  
-  def getByIndex(self, row):
-    return row[self.indexOffset]
-    
-  def getByKey(self, row):
-    return row.getValue(self.field)
+    if self.field == SHAPE_SLOT:
+      self.field = (SHAPE_FIELD_DA if self.indexAccess else SHAPE_FIELD)
     
   def getFieldNames(self):
     return [self.field]
@@ -223,13 +330,50 @@ class OneFieldGetter(RowOperator):
   def getFieldCount(self):
     return 1
   
+  def hasSlot(self, slot):
+    return slot == self.slot
+  
+  def addConversion(self, slot, converter):
+    if not self.hasSlot(slot):
+      raise KeyError, 'slot {} not found for conversion'.format(slot)
+    self.converter = converter
+    
+class OneFieldSetter(OneFieldRowOperator):
+  def initSlots(self):
+    OneFieldRowOperator.initSlots(self)
+    self.set = self.setByIndex if self.indexAccess else self.setByKey
+    
+  def setByIndex(self, row, value):
+    row[self.indexOffset] = self.converter(value) if self.converter else value
+    return row
+    
+  def setByKey(self, row, value):
+    row.setValue(self.field, self.converter(value) if self.converter else value)
+    return row
+  
+  def createFields(self, layer, value, overwrite=True, append=False):
+    if self.field not in SHAPE_FIELDS:
+      common.addFields(layer, [self.field], typePattern=[value], overwrite=overwrite, append=append)
+  
+class OneFieldGetter(OneFieldRowOperator):
+  def initSlots(self):
+    OneFieldRowOperator.initSlots(self)
+    self.get = self.getByIndex if self.indexAccess else self.getByKey
+  
+  def getByIndex(self, row):
+    return self.converter(row[self.indexOffset]) if self.converter else row[self.indexOffset]
+    
+  def getByKey(self, row):
+    return self.converter(row.getValue(self.field)) if self.converter else row.getValue(self.field)     
+
+    
 class Getter(RowOperator):
   def initSlots(self):
     RowOperator.initSlots(self)
     self.get = self.getByIndex if self.indexAccess else self.getByKey
     if self.indexAccess:
       self.slotIndexes = {slot : self.fieldIndexes[field] for slot, field in self.slots.iteritems()}
-    
+  
   def getByIndex(self, row):
     result = self.constants.copy()
     for slot, index in self.slotIndexes.iteritems():
@@ -243,7 +387,6 @@ class Getter(RowOperator):
       result[slot] = row.getValue(field)
     result = self.converted(result) if self.conversions else result
     return self.object(**result) if self.object else result
-
       
 class Setter(RowOperator):
   def __init__(self, slots, callerNames={}, types={}, **kwargs):
@@ -293,7 +436,13 @@ class Setter(RowOperator):
 
   def setByIndex(self, row, values):
     if values is not None:
-      values = converted(values) if self.conversions else values
+      # if values['osm_id'] == '207732211':
+        # print(values, len(values['shape'][0]), self.conversions)
+      # print values
+      values = self.converted(values) if self.conversions else values
+      # if values['osm_id'] == '207732211':
+        # print(values, values['shape'].pointCount)
+      # print(values)
       for index, caller in self.dynamic:
         val = caller(values)
         if val is not None:
@@ -304,7 +453,7 @@ class Setter(RowOperator):
   
   def setByKey(self, row, values):
     if values is not None:
-      values = converted(values) if self.conversions else values
+      values = self.converted(values) if self.conversions else values
       for field, caller in self.dynamic:
         val = caller(values)
         if val is not None:
@@ -314,17 +463,13 @@ class Setter(RowOperator):
     return row
     # except KeyError, slot:
       # raise KeyError, 'slot {} value not supplied when writing to {}'.format(slot, self.layer)
-  
-  def newRow(self, cursor):
-    if self.indexAccess:
-      return [None] * len(self.fieldNames)
-    else:
-      return cursor.newRow()
-  
+    
   def createFields(self, layer, typePattern, overwrite=True, append=False):
     # print self.fieldsToSlots, typePattern
     fieldList = common.fieldList(layer)
     for field, caller in self.fieldCallers.iteritems():
+      if field in SHAPE_FIELDS:
+        continue
       fieldFound = bool(field in fieldList)
       if fieldFound:
         if overwrite and not append:
@@ -336,6 +481,7 @@ class Setter(RowOperator):
       if self.fieldSlots[field] in self.types:
         coltype = self.types[self.fieldSlots[field]]
       else:
+        # print(self.types, layer, field, caller, typePattern)
         coltype = type(caller(typePattern))
         if coltype is type(None):
           raise ValueError, 'could not infer type for {} slot'.format(self.fieldSlots[field])
@@ -356,7 +502,7 @@ class Retriever:
   def feed(self, objects):
     self.objects = objects
   
-  def retrieve(self, row):
+  def get(self, row):
     try:
       return self.lookup(self.getter.get(row))
     except KeyError:
@@ -382,7 +528,7 @@ class SequentialRetriever(Retriever):
   def setIndexAccess(self, *args, **kwargs):
     pass
   
-  def retrieve(self, row):
+  def get(self, row):
     self.i += 1
     try:
       return self.objects[self.i]
@@ -420,6 +566,14 @@ class SidelessRelationRetriever(RelationRetriever):
       return self.objects[(direct[1], direct[0])]
 
 
+# class Remapper:
+  # def __init__(self, getter, setter):
+    # self.getter = getter
+    # self.setter = setter
+  
+  # def remap(self, inRow, outRow):
+    # self.setter.set(outRow, self.getter.get(inRow))
+  
 
     
 class CursorOperator:
@@ -463,16 +617,20 @@ class ReadCursor(CursorOperator):
     self.where = where
     self.getter = getter
     self.getter.setIndexAccess(self.usesDA)
-    if not self.usesDA and self.hasShapeField():
-      self.getter.addConversion(self.getShapeFieldName(), SHAPE_CONVERTORS[self.getShapeType()])
+    if self.getter.hasSlot(SHAPE_SLOT):
+      shapeType = self.getShapeType()
+      try:
+        converter = ARCPY_TO_LIST_SHAPE_CONV[shapeType]
+      except KeyError:
+        raise ValueError, 'cannot read shape type: ' + shapeType
+      self.getter.addConversion(SHAPE_SLOT, ARCPY_TO_LIST_SHAPE_CONV[shapeType])
               
   def calibrate(self, row, text=None):
     if text:
+      # print(common.count(self.layer))
       self.progressor = common.progressor(text, common.count(self.layer))
   
   def rows(self, text=None):
-    if text:
-      common.progress(text)
     if self.usesDA:
       cursor = arcpy.da.SearchCursor(self.layer, self.getter.getFieldNames(), self.where)
     else:
@@ -495,14 +653,37 @@ class WriteCursor(CursorOperator):
     self.overwrite = overwrite
     self.append = append
     self.template = template
+    if setter.hasSlot(SHAPE_SLOT):
+      if crs is None and shapeType is None and (template is None or not isFeatureClass(template)):
+        raise ValueError, 'geometry write requested without specifying spatial reference'
+      else:
+        self.hasShape = True
+    else:
+      self.hasShape = False
     self.crs = crs
     self.shapeType = shapeType
-    self.hasShape = not (crs is None and shapeType is None and (template is None or not isFeatureClass(template)))
-    if not self.usesDA and shapeType:
-      global numpy
-      import numpy
-      self.setter.addConversion(SHAPE_FIELD, SHAPE_CONVERTORS[shapeType.lower()])
+    if not shapeType and crs:
+      self.shapeType = common.getShapeType(crs)
+    if self.hasShape:
+      try:
+        self.setter.addConversion(SHAPE_SLOT, self.createShapeConverter())
+      except KeyError:
+        raise ValueError, 'cannot write shape type: ' + self.shapeType
     self.setter.setIndexAccess(self.usesDA)
+  
+  def createShapeConverter(self):
+    # we need to specify the CRS if possible because ArcPy does some nasty generalization for too small differences (such as in degree coordinates)
+    listToShape = LIST_TO_ARCPY_SHAPE_CONV[self.shapeType.lower()]
+    if self.crs is None and self.template is None:
+      return listToShape
+    else:
+      if common.isCoordinateReference(self.crs):
+        spr = arcpy.SpatialReference(self.crs)
+      else:
+        spr = arcpy.Describe(self.crs if self.crs is not None else self.template).spatialReference
+      # print(spr)
+      # spr = arcpy.SpatialReference(self.crs if self.crs is not None else self.template)
+      return lambda coor: listToShape(coor, spr)
   
   def write(self, rows, text=None, rowcount=None):
     if rows:
@@ -531,17 +712,39 @@ class WriteCursor(CursorOperator):
       return arcpy.InsertCursor(self.layer)
     
   def create(self, row):
+    # print(row, self.setter.slots, self.hasShape, self.shapeType, self.setter.conversions)
     if not self.append:
       if self.overwrite:
         arcpy.env.overwriteOutput = True
       if self.hasShape:
-        self.layer = common.createFeatureClass(self.layer, self.shapeType, self.template, self.crs)
+        self.layer = common.createFeatureClass(self.layer, self.shapeType.upper(), self.template, self.crs)
       else:
         self.layer = common.createTable(self.layer)
     self.setter.createFields(self.layer, row, append=self.append)
   
   def writeRow(self, cursor, values):
-    cursor.insertRow(self.setter.set(self.setter.newRow(cursor), values))
+    # if values['osm_id'] == '207732211': print(values)
+    try:
+      # print(values)
+      cursor.insertRow(self.setter.set(self.setter.newRow(cursor), values))
+    except:
+      print('WRITTEN ROW', values)
+      # print(self.setter.set(self.setter.newRow(cursor), values))
+      # print(values)
+      # # print(self.layer)
+      # # print(self.setter.converted(values))
+      # # print(self.setter.slotCallers)
+      raise
+
+class AsynchronousWriteCursor(WriteCursor):
+  def __init__(self, *args, **kwargs):
+    WriteCursor.__init__(self, *args, **kwargs)
+    self.cursor = None
+  
+  def write(self, row):
+    if not self.cursor:
+      self.cursor = self.calibrate(row)
+    self.writeRow(self.cursor, row)
       
 class UpdateCursor(CursorOperator):
   def __init__(self, layer, retriever, setter, overwrite=True, where=None, constants={}):
@@ -561,7 +764,7 @@ class UpdateCursor(CursorOperator):
         pattern = next(objects.itervalues())
       else:
         for pattern in objects: break
-      print pattern, text
+      # print pattern, text
       cursor = self.calibrate(pattern, text)
       for row in cursor:
         self.updateRow(cursor, row)
@@ -585,9 +788,9 @@ class UpdateCursor(CursorOperator):
     # common.message(self.setter.fieldNames)
     # common.message(self.setter.dynamic)
     # common.message(self.setter.static)
-    # common.message(self.retriever.retrieve(row))
+    # common.message(self.retriever.get(row))
     # raise RuntimeError
-    cursor.updateRow(self.setter.set(row, self.retriever.retrieve(row)))
+    cursor.updateRow(self.setter.set(row, self.retriever.get(row)))
 
 class TranslateCursor(UpdateCursor):
   def __init__(self, layer, getter, setter, where=None, overwrite=True, constants={}):
@@ -651,9 +854,9 @@ class BasicReader(DatasetReader):
   requiredInputSlots = []
   targetClass = dict
   
-  def __init__(self, layer, slotDict, targetClass=None, where=None, sortSlots=[]):
+  def __init__(self, layer, slotDict, targetClass=None, where=None, sortSlots=[], constants={}):
     DatasetReader.__init__(self, layer, targetClass=targetClass)
-    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where, sortSlots=sortSlots)
+    self.reader = ReadCursor(layer, self.createGetter(slotDict, constants), where=where, sortSlots=sortSlots)
 
   def read(self, text=None):
     return list(self.reader.rows(text=text))
@@ -661,9 +864,9 @@ class BasicReader(DatasetReader):
 class DictReader(DatasetReader):
   requiredInputSlots = ['id']
 
-  def __init__(self, layer, slotDict, where=None, sortSlots=[]):
+  def __init__(self, layer, slotDict, where=None, sortSlots=[], constants={}):
     DatasetReader.__init__(self, layer)
-    self.reader = ReadCursor(layer, self.createGetter(slotDict), where=where, sortSlots=sortSlots)
+    self.reader = ReadCursor(layer, self.createGetter(slotDict, constants), where=where, sortSlots=sortSlots)
   
   def read(self, text=None):
     out = {}
@@ -841,18 +1044,31 @@ class NeighbourTableReader(RelationReader):
   handledFails = 'ignored'
   DEFAULT_FROM_SETTER_NAME = 'setNeighbours'
   
+  def __init__(self, layer, slots={}, exterior=False, **kwargs):
+    RelationReader.__init__(self, layer, slots, **kwargs)
+    self.doExterior = exterior
+    common.debug(self.doExterior, '!')
+    self.exterior = regional.exterior
+  
   def addRelation(self, relations, row):
     relations[row['from']].append(row['to'])
   
   def remapTargets(self, objectDict, relation):
     remapped = []
+    # common.debug(relation)
     for id in relation:
       if id in objectDict:
         remapped.append(objectDict[id])
+      elif self.isExteriorID(id):
+        if self.doExterior:
+          remapped.append(self.exterior)
       else:
         self.fail()
+    # common.debug(remapped)
     return remapped
 
+  def isExteriorID(self, id):
+    return (int(id) == -1)
         
 class AdditiveReader(MatchReader):
   targetClass = None
@@ -875,11 +1091,50 @@ class AdditiveReader(MatchReader):
       self.additions[row['id']] = row
     return additions
         
-class PointGeometryReader(AdditiveReader):
+class PointGeometryAdditiveReader(AdditiveReader):
   containsWhat = 'point geometries'
   handledFails = 'ignored'
  
  
+class BasicWriter(DatasetOperator):
+  def __init__(self, layer, slotDict, **kwargs):
+    DatasetOperator.__init__(self, layer)
+    self.writer = WriteCursor(layer, Setter(slotDict), **kwargs)
+
+  def write(self, dicts, text=None):
+    self.writer.write(dicts)
+
+class OneFieldWriter(DatasetOperator):
+  def __init__(self, layer, field, **kwargs):
+    DatasetOperator.__init__(self, layer)
+    self.writer = WriteCursor(layer, OneFieldSetter(field), **kwargs)
+  
+  def write(self, lst, text=None):
+    self.writer.write(lst)
+    
+
+class GeoJSONBasedWriter(DatasetOperator):
+  def __init__(self, layer, slotDict, types={}, **kwargs):
+    # import geojson
+    DatasetOperator.__init__(self, layer)
+    self.writer = AsynchronousWriteCursor(layer, Setter(slotDict, types=types), **kwargs)
+    self.types = types
+    self.inDB = common.isInDatabase(layer)
+  
+  def write(self, json):
+    # print('geojson', json)
+    arc = {SHAPE_SLOT : geojsonToArcPyList(json['geometry'])}
+    props = json['properties']
+    for slot in props:
+      if props[slot] is None and not self.inDB:
+        props[slot] = self.types[slot]()
+      arc[slot] = props[slot]
+    # arc.update(key, (value if value is not None  for key, value in json['properties'])
+    # print('arc', arc)
+    # print(self.writer.layer, arc)
+    # if props['osm_id'] == '207732211': print('geoj-write', json['geometry'], arc)
+    self.writer.write(arc)
+    
 class RelationWriter(DatasetOperator):
   REQUIRED_SLOTS = ('from', 'to')
   DEFAULT_FIELDS = {'from' : 'ID_FROM', 'to' : 'ID_TO'}
@@ -946,6 +1201,10 @@ class Marker(DatasetOperator):
   def __init__(self, layer, inSlots, outSlots, outCallers={}, outTypes={}, where=None):
     DatasetOperator.__init__(self, layer)
     self.updater = UpdateCursor(layer, self.retrieverClass(self.createGetter(inSlots), strict=self.strictRetrieve, default=self.defaultRow), self.createSetter(outSlots, outCallers, outTypes), where=where)
+    # print(inSlots)
+    # print(outSlots)
+    # print(outTypes)
+    # print(outCallers)
     # common.message(inSlots)
     # common.message(outSlots)
   
@@ -1034,6 +1293,9 @@ class FunctionUpdater(DatasetOperator):
     self.translator = TranslateCursor(layer, self.createGetter(inSlots), Setter(self.prepareSlots(outSlots, self.requiredOutputSlots)), where=where)
   
   def decompose(self, text=None):
+    self.translate(text=text)
+  
+  def translate(self, text=None):
     self.translator.translate(self.translate, text=text)
     
 
@@ -1157,6 +1419,7 @@ class ConfigReader:
         raise ConfigError, '{} is not a valid ratio value for {} node'.format(valstr, node.tag)
 
         
+        
 def inferFieldTypes(data, slots, callers={}):
   types = {}
   for slot in slots:
@@ -1179,3 +1442,65 @@ def inferFieldTypes(data, slots, callers={}):
     else:
       common.warning('could not infer type for {} slot (no values found), output may be impossible'.format(slot))
   return types
+  
+def getUniqueValues(fc, fld):
+  return list(set(OneFieldReader(fc, fld).read()))
+  
+  
+def findExtentTiles(clipping, maxxDeg, maxyDeg, shout=False):
+  dsc = arcpy.Describe(clipping)
+  crs = dsc.spatialReference
+  ext = dsc.extent
+  bboxAll = (ext.XMin, ext.YMin, ext.XMax, ext.YMax)
+  xmin, ymin, xmax, ymax = bboxAll
+  allCenter = (0.5 * (xmin + xmax), 0.5 * (ymin + ymax))
+  xcells, ycells = determineCellCounts(bboxAll, *projectDim(
+      maxxDeg, maxyDeg, *allCenter, dimCRS=WGS_84_PRJ, baseCRS=crs))
+  if xcells == 1 and ycells == 1:
+    yield projectBBox(bboxAll, crs, WGS_84_PRJ)
+  else:
+    import geometry
+    with common.PathManager(clipping, shout=shout) as pathman:
+      # determine all tiles overlapping the clipping extent
+      # cover the extent with a fishnet
+      fishnet = pathman.tmpFile()
+      origin = ' '.join(str(x) for x in (xmin, ymin))
+      ydirection = ' '.join(str(x) for x in (xmin, ymax))
+      opposite = ' '.join(str(x) for x in (xmax, ymax))
+      # print(fishnet, ' '.join((xmin, ymin)), arcpy.Point(xmin, ymax), None, None, ycells, xcells, arcpy.Point(xmax, ymax), 'NO_LABELS', ext, 'POLYGON')
+      arcpy.CreateFishnet_management(fishnet, origin, ydirection, None, None, ycells, xcells, opposite, 'NO_LABELS', None, 'POLYGON')
+      # select only those overlapping the exact clipping geometry
+      overlap = pathman.tmpLayer()
+      arcpy.MakeFeatureLayer_management(fishnet, overlap)
+      arcpy.SelectLayerByLocation_management(overlap, 'INTERSECT', clipping)
+      # retrieve the overlapping extents
+      cells = OneFieldReader(overlap, SHAPE_SLOT).read()
+      for cell in cells:
+        yield projectBBox(geometry.MultiPolygon(cell).bbox, crs, WGS_84_PRJ)
+      
+        
+def determineCellCounts(bboxAll, maxx, maxy):
+  xmin, ymin, xmax, ymax = bboxAll
+  # calculate the counts of cells
+  xcells = int(math.ceil((xmax - xmin) / maxx))
+  ycells = int(math.ceil((ymax - ymin) / maxy))
+  return xcells, ycells
+
+def projectDim(xdim, ydim, xbase, ybase, dimCRS, baseCRS):
+  # transform xbase, ybase to a point in dimCRS
+  basePt = (xbase, ybase)
+  xbaseP, ybaseP = arcpyToPoint(pointToArcPy(basePt, baseCRS).projectAs(dimCRS))
+  # create a bbox with xdim, ydim dimensions in dimCRS
+  bboxP = (xbaseP, ybaseP, xbaseP + xdim, ybaseP + ydim)
+  bbox = projectBBox(bboxP, dimCRS, baseCRS)
+  return (bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+BBOX_TO_RECT = [(0, 1), (2, 1), (2, 3), (0, 3), (0, 1)]
+  
+def projectBBox(bbox, fromCRS, toCRS):
+  rect = [[bbox[i] for i in tup] for tup in BBOX_TO_RECT]
+  # project the rectangle to toCRS and get the dimensions from the extent
+  rectProjExt = lineToArcPy([rect], fromCRS).projectAs(toCRS).extent
+  return (rectProjExt.XMin, rectProjExt.YMin, rectProjExt.XMax, rectProjExt.YMax)
+
+  

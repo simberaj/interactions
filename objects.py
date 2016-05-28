@@ -443,7 +443,16 @@ class Neighbour:
   
   def getNeighbours(self):
     return self.neighbours
+    
+class Exterior(Neighbour):
+  def getID(self):
+    return -1
 
+  def __repr__(self):
+    return '<Exterior>'
+
+exterior = Exterior()
+  
 class GeometricalZone(Neighbour):
   '''A zone that implements neighbourhood by geometry intersection.'''
 
@@ -536,13 +545,14 @@ class RegionalZone(RegionalUnit, Neighbour):
     # oscillation assignments are included...
     contig = set()
     for zone in self.neighbours:
-      contig.add(zone.getRegion())
+      if zone is not exterior:
+        contig.add(zone.getRegion())
     contig.discard(None)
     return contig
         
   def hasContiguousRegion(self, region):
     for zone in self.neighbours:
-      if region is zone.getRegion():
+      if zone is not exterior and region is zone.getRegion():
         return True
     return False
 
@@ -1179,7 +1189,7 @@ class Region(RegionalUnit):
     return self.articulations
   
   def calcArticulations(self):
-    '''Calculates region articulation points - zones that would cause some other hinterland zones of the region to bacome exclaves.'''
+    '''Calculates region articulation points - zones that would cause some other hinterland zones of the region to become exclaves.'''
     if not self.assignments: return []
     artic = defaultdict(list) # articulation points and portions they hide from the start zone
     togo = [] # DFS stack
@@ -1192,7 +1202,8 @@ class Region(RegionalUnit):
       if not ass.isExclave():
         zone = ass.getZone()
         if not togo: togo.append(zone)
-        neighs[zone] = [neigh for neigh in zone.getNeighbours() if neigh.isInContiguousRegion(self)]
+        neighs[zone] = [neigh for neigh in zone.getNeighbours() if
+            neigh is not exterior and neigh.isInContiguousRegion(self)]
     # start DFS
     root = togo[-1]
     counter = 0
@@ -1248,6 +1259,11 @@ class Region(RegionalUnit):
   def erase(self):
     '''Erases the region from all its zones.'''
     for ass in self.assignments:
+      ass.erase()
+  
+  def dissolve(self):
+    '''Erases the region from all its zones.'''
+    for ass in self.assignments:
       ass.dissolve()
   
   def detectExclaves(self):
@@ -1257,7 +1273,7 @@ class Region(RegionalUnit):
     while queue:
       examined = queue.popleft()
       for neigh in examined.getNeighbours():
-        if neigh.isInRegion(self) and neigh in noconn:
+        if neigh is not exterior and neigh.isInRegion(self) and neigh in noconn:
           noconn.remove(neigh)
           queue.append(neigh)
     # anything that remained in noconn is an exclave
@@ -1293,6 +1309,7 @@ class Region(RegionalUnit):
       if not ass.isExclave():
         contig.update(ass.getZone().getNeighbours())
     contig.difference_update(self.getZones())
+    contig.discard(exterior)
     # common.debug([zone.assignments for zone in self.getZones()])
     # common.debug(contig)
     return list(contig)

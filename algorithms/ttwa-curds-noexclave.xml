@@ -8,7 +8,7 @@
       <institution>Charles University in Prague</institution>
       <contact type="email">simberaj@natur.cuni.cz</contact>
     </author>
-    <description lang="cs-CZ">Zatim neobsahuje linearni tradeoff velikosti a uzavrenosti. CURDS transformace pouziva misto Smartova vzorce pro normalizaci toku rozlozeny vzorec z Coombese (1986), ktery mene zvyhodnuje mensi centra. Obsahuje eliminaci exklav.</description>
+    <description lang="cs-CZ">CURDS transformace pouziva misto Smartova vzorce pro normalizaci toku rozlozeny vzorec z Coombese (1986), ktery mene zvyhodnuje mensi centra. Obsahuje eliminaci exklav.</description>
   </metadata>
   <region type="functional" />
   <elements>
@@ -35,7 +35,7 @@
       <bidirectional-flows true="1" />
       <try-change true="0" />
       <try-merge true="0" />
-      <consider-hinterland-flows true="0" />
+      <consider-hinterland-flows true="1" />
       <reassign-hinterland-separately true="1" />
       <transform type="curds" />
       <secondary-criterion id="verifier" />
@@ -53,6 +53,16 @@
       <group type="simultaneous">
         <criterion type="mass" direction="min" parameter="mass-criterion" />
         <criterion type="averaged-self-containment" direction="min" parameter="sc-criterion" />
+        <group type="linear-tradeoff" valx="mass" valy="averaged-self-containment" direction="min">
+          <point>
+            <valx parameter="mass-criterion" />
+            <valy parameter="sc-tradeoff" />
+          </point>
+          <point>
+            <valx parameter="mass-tradeoff" />
+            <valy parameter="sc-criterion" />
+          </point>
+        </group>
       </group>
     </verifier>
     <verifier id="secondary" active="0">
@@ -86,7 +96,9 @@
     </stage>
   </algorithm>
   <parameters>
-    <parameter id="mass-criterion">Minimum Region Mass</parameter>
-    <parameter id="sc-criterion">Minimum Region Self-Containment (Averaged, %)</parameter>
+    <parameter id="mass-criterion" default="3500">Minimum Region Mass</parameter>
+    <parameter id="sc-criterion" default="66">Minimum Region Self-Containment (Averaged, %)</parameter>
+    <parameter id="mass-tradeoff" default="25000">Tradeoff Region Mass</parameter>
+    <parameter id="sc-tradeoff" default="75">Tradeoff Region Self-Containment (Averaged, %)</parameter>
   </parameters>
 </delimitersetup>

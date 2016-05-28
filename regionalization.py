@@ -20,8 +20,8 @@ MASS_SORTER = operator.methodcaller('getMass')
 SECONDARY_MASS_SORTER = operator.methodcaller('getSecondaryMass')
 GAIN_SORTER = operator.methodcaller('getGain')
 
-# DEBUG_FLOW = True
-DEBUG_FLOW = False
+DEBUG_FLOW = True
+# DEBUG_FLOW = False
 
 class Regionalizer:
   def __init__(self, regionFactory):
@@ -225,7 +225,9 @@ class Aggregator(SortingUser):
         self.todo = []
       else:
         return None
+    common.debug(self.sorter)
     self.sorter.sort(self.targets, reverse=(not self.descending))
+    common.debug(self.targets[-1:])
     return self.targets.pop()
     
   def aggregate(self, candidate):
@@ -341,7 +343,7 @@ class FlowAggregator(Aggregator):
       zones = region.getCoreZones() if self.separateHinterland else region.getZones()
       for zone in zones:
         yield Assignment(zone, target, False)
-      region.erase()
+      region.dissolve()
       if self.separateHinterland:
         for zone in region.getHinterlandZones():
           yield self.aggregateZone(zone)
@@ -916,6 +918,7 @@ class Merger(SortingUser): # OK, multiready
   
   def merge(self, master, slave):
     if DEBUG_FLOW: common.debug('Merging {slave}: {master}'.format(**locals()))
+    slave.dissolve()
     assig = []
     for core in slave.getCoreZones():
       core.deassign()
@@ -923,7 +926,6 @@ class Merger(SortingUser): # OK, multiready
     for hinter in slave.getHinterlandZones():
       hinter.deassign()
       assig.append(Assignment(hinter, master, core=False))
-    slave.erase()
     return assig
   
 
@@ -1098,8 +1100,64 @@ class SimultaneousGroup(VerificationGroup):
 class AlternativeGroup(VerificationGroup):
   pass # TODO
 
-class LinearTradeoffGroup(VerificationGroup): # TODO
-  pass
+class LinearTradeoffGroup(VerificationGroup):
+  def __init__(self, points, xCritClass, yCritClass, min=True):
+    VerificationGroup.__init__(self, criteria=[])
+    self.xCritClass = xCritClass
+    self.yCritClass = yCritClass
+    self.ymax = yCritClass.maxValue
+    self.min = min
+    self._tradeoff = self._tradeoffFunction(points)
+
+  def _tradeoffFunction(self, points):
+    (x1, y1), (x2, y2) = points
+    if self.xCritClass.ratio: x1, x2 = x1 / 100.0, x2 / 100.0
+    if self.yCritClass.ratio: y1, y2 = y1 / 100.0, y2 / 100.0
+    if x1 == x2 or y1 == x2:
+      raise ValueError, 'linear tradeoff parallel to axes, use simple criterion instead'
+    k = (y2 - y1) / float(x2 - x1)
+    q = y1 - k * x1
+    self.k = k
+    self.q = q
+    common.debug('tradeoff equation: y >= {k} * x + {q}'.format(k=k, q=q))
+    if self.min:
+      return lambda x, y: y >= (k * x + q)
+    else:
+      return lambda x, y: y <= (k * x + q)
+  
+  def getSortValue(self, object):
+    vals = self._getValues(object)
+    crit = vals[1] - self.k * vals[0] - self.q
+    return self.ymax + crit if self.min else self.ymax - crit # TODO: will fail if y is other than SC
+  
+  def _getValues(self, object):
+    return (self.xCritClass.getCriterionValue(object),
+        self.yCritClass.getCriterionValue(object))
+    
+  def verify(self, object):
+    return self._tradeoff(*self._getValues(object))
+  
+  def verifyTimes(self, object, times):
+    return self._tradeoff(*[crit * times for crit in self._getValues(object)])
+  
+  def verifyWithout(self, object, part):
+    maincrits = self._getValues(object)
+    partcrits = self._getValues(part)
+    return self._tradeoff(*[maincrits[i] - partcrits[i] for i in range(len(maincrits))])
+  
+  def verifyTogether(self, objects):
+    crits = [0.0, 0.0]
+    for obj in objects:
+      vals = self._getValues(obj)
+      crits = [crits[i] + vals[i] for i in (0,1)]
+    return self._tradeoff(crits)
+    
+  def createSorter(self):
+    return VerificationSorter(self)
+  
+  def getSortFunction(self):
+    return self.getSortValue
+  
 
 class VerificationCriterion(Verifier):
   sortfunction = None
@@ -1139,6 +1197,7 @@ class VerificationCriterion(Verifier):
 class MainMassCriterion(VerificationCriterion):
   sortfunction = MASS_SORTER
   ratio = False
+  maxValue = 10000000000
   
   @staticmethod
   def getCriterionValue(object):
@@ -1147,6 +1206,7 @@ class MainMassCriterion(VerificationCriterion):
 class HinterlandMassCriterion(VerificationCriterion):
   sortfunction = MASS_SORTER
   ratio = False
+  maxValue = 10000000000
   
   @staticmethod
   def getCriterionValue(object):
@@ -1155,6 +1215,7 @@ class HinterlandMassCriterion(VerificationCriterion):
 class SecondaryMassCriterion(VerificationCriterion):
   sortfunction = SECONDARY_MASS_SORTER
   ratio = False
+  maxValue = 10000000000
   
   @staticmethod
   def getCriterionValue(object):
@@ -1162,6 +1223,7 @@ class SecondaryMassCriterion(VerificationCriterion):
 
 class MinimalSelfContainmentCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1171,6 +1233,7 @@ class MinimalSelfContainmentCriterion(VerificationCriterion):
 
 class RatioSelfContainmentCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1000000.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1183,6 +1246,7 @@ class RatioSelfContainmentCriterion(VerificationCriterion):
 
 class OutflowSelfContainmentCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1197,6 +1261,7 @@ class OutflowSelfContainmentCriterion(VerificationCriterion):
 
 class InflowSelfContainmentCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1211,6 +1276,7 @@ class InflowSelfContainmentCriterion(VerificationCriterion):
 
 class AveragedSelfContainmentCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1226,6 +1292,7 @@ class AveragedSelfContainmentCriterion(VerificationCriterion):
     
 class RegionIntegrityCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1238,6 +1305,7 @@ class RegionIntegrityCriterion(VerificationCriterion):
   
 class HinterlandIntegrityCriterion(VerificationCriterion):
   ratio = True
+  maxValue = 1000000.0
   
   @staticmethod
   def getCriterionValue(object):
@@ -1510,6 +1578,7 @@ class MultipleSorter(Sorter):
   
   def multiplyFunctionBuilder(self, fxs):
     def multiplyFunction(x):
+      common.debug(tuple(fx(x) for fx in fxs))
       return reduce(operator.mul, ((1e-4 if val == 0 else val) for val in (fx(x) for fx in fxs)))
     return multiplyFunction
   
@@ -1751,33 +1820,26 @@ class DRSetupReader(SetupReader):
   
   
   def parseMerger(self, node):
-    return self.typeGet(node, self.MERGER_FACTORIES)(node)
-  
-  def parseHamplMerger(self, node):
-    return HamplMerger(target=self.typeGet(node, self.PART_TARGETS, 'target'),
+    return self.typeGet(node, self.MERGER_FACTORIES)(node, self.mergerParams(node))
+    
+  def mergerParams(self, node):
+    return dict(target=self.typeGet(node, self.PART_TARGETS, 'target'),
       threshold=self.ratioGet(node.find('threshold')),
       neighcon=self.boolGet(node.find('neighbourhood'), default=False),
       sorterRef=self.strGet(node.find('external-ordering'), default=None))
+  
+  def parseHamplMerger(self, node, params={}):
+    return HamplMerger(**params)
       
-  def parseCoombesMerger(self, node):
-    return CoombesMerger(target=self.typeGet(node, self.PART_TARGETS, 'target'),
-      threshold=self.ratioGet(node.find('threshold')),
-      toFlowRatio=self.ratioGet(node.find('to-flow')),
-      counterFlowRatio=self.ratioGet(node.find('counter-flow')),
-      neighcon=self.boolGet(node.find('neighbourhood'), default=False),
-      sorterRef=self.strGet(node.find('external-ordering'), default=None))
+  def parseCoombesMerger(self, node, params={}):
+    return CoombesMerger(toFlowRatio=self.ratioGet(node.find('to-flow')),
+      counterFlowRatio=self.ratioGet(node.find('counter-flow')), **params)
   
-  def parseWattsMerger(self, node):
-    return WattsMerger(target=self.typeGet(node, self.PART_TARGETS, 'target'),
-      threshold=self.ratioGet(node.find('threshold')),
-      neighcon=self.boolGet(node.find('neighbourhood'), default=False),
-      sorterRef=self.strGet(node.find('external-ordering'), default=None))
+  def parseWattsMerger(self, node, params={}):
+    return WattsMerger(**params)
 
-  def parseMinimalMerger(self, node):
-    return MinimalMerger(target=self.typeGet(node, self.PART_TARGETS, 'target'),
-      threshold=self.ratioGet(node.find('threshold')),
-      neighcon=self.boolGet(node.find('neighbourhood'), default=False),
-      sorterRef=self.strGet(node.find('external-ordering'), default=None))
+  def parseMinimalMerger(self, node, params={}):
+    return MinimalMerger(**params)
 
   
   def parseDestroyer(self, node):
@@ -1811,26 +1873,36 @@ class DRSetupReader(SetupReader):
     value = self.ratioGet(node) if critClass.ratio else self.valueGet(node)
     return critClass(min=self.typeGet(node, self.THRESHOLD_DIRECTIONS, 'direction'), value=value)
 
+  def parsePoint(self, node):
+    pt = []
+    for key in ('valx', 'valy'):
+      pt.append(self.valueGet(node.find(key)))
+    return tuple(pt)
+    
   def parseGroup(self, node):
     groupFactory = self.typeGet(node, self.GROUP_FACTORIES)
     siblings = []
     for grnode in node.findall('group'):
       siblings.append(self.parseGroup(grnode))
+    for ptnode in node.findall('point'):
+      siblings.append(self.parsePoint(ptnode))
     for simpnode in node.findall('criterion'):
       siblings.append(self.parseCriterion(simpnode))
-    # TODO: parse additional group parameters (tradeoff etc)
-    return groupFactory(siblings)
+    return groupFactory(node, siblings)
   
-  def parseSimultaneousGroup(self, siblings):
+  def parseSimultaneousGroup(self, node, siblings):
     return SimultaneousGroup(siblings)
   
-  def parseAlternativeGroup(self, siblings):
+  def parseAlternativeGroup(self, node, siblings):
     return AlternativeGroup(siblings)
   
-  def parseLinearTradeoff(self, siblings):
+  def parseLinearTradeoff(self, node, siblings):
     if len(siblings) != 2:
-      raise ConfigError, 'linear tradeoff verifier requires exactly 2 criteria, {} found'.format(len(siblings))
-    return LinearTradeoffGroup(siblings)
+      raise ConfigError, 'linear tradeoff verifier requires exactly 2 points, {} found'.format(len(siblings))
+    return LinearTradeoffGroup(siblings,
+        xCritClass=self.typeGet(node, self.CRITERIA, attr='valx'),
+        yCritClass=self.typeGet(node, self.CRITERIA, attr='valy'),
+        min=self.typeGet(node, self.THRESHOLD_DIRECTIONS, 'direction'))
   
   def parseColoring(self, node):
     try:
@@ -1877,7 +1949,7 @@ def runByParams(zoneLayer, zoneIDFld, zoneMassFld, zoneCoopFld='', zoneRegFld=''
   loader.sourceOfZones(zoneLayer, {'id' : zoneIDFld, 'mass' : zoneMassFld, 'color' : zoneColFld}, targetClass=objects.MonoZone)
   loader.sourceOfPresets({'assign' : zoneRegFld, 'coop' : zoneCoopFld})
   loader.sourceOfInteractions(interTable, {'from' : interFromIDFld, 'to' : interToIDFld, 'value' : interStrFld})
-  loader.possibleNeighbourhood(neighTable)
+  loader.possibleNeighbourhood(neighTable, exterior=False)
   setOutputs(loader, outRegFld, doOutCoreStr, doOutColorStr, measureFldsStr, outOverlapTable, delimit)
   run(reg, loader, delimit=delimit)
 
